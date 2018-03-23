@@ -33,9 +33,6 @@
 #include "opencv_utils.h"
 #include "args.hxx"
 
-//#include "ap_int.h"
-//#include "ap_fixed.h"
-
 #define HLS_NO_XIL_FPO_LIB
 //#ifdef USING_HLS_OPENCV
 	//#include <hls_opencv.h>
@@ -45,12 +42,6 @@
 //#endif
 
 #define WINDOW_NAME "OpenCV Test"
-// Should probs make is 720x480
-//#define WINDOW_WIDTH 720
-//#define WINDOW_HEIGHT 540
-//#define WINDOW_WIDTH 1520
-//#define WINDOW_HEIGHT 780
-
 #define LINE_THICKNESS 4
 
 // External functions that are either defined in a linked library or compiled driver source file
@@ -72,10 +63,25 @@ extern "C" {
 	unsigned int inference_arr(uint8_t * img_in, unsigned int results[64], int number_class, float *usecPerImage);
 }
 
+// How many previous classifications should be remembered
+#define HST_LEN 32
+float lambda = 0.2; // Decay constant
+std::vector<float> history_weights(HST_LEN);
+std::vector<std::vector<unsigned int> > result_history;
+
+struct scene_object
+{
+	cv::Rect pos; // Most recent position
+	std::vector<cv::Point> prev_points;
+	std::vector<std::vector<unsigned int> > result_history; // All its previous classifications
+};
+
+std::vector<scene_object> scene_objects;
+
 int num_results = 0;
 int roi_limit 	= -1; // Limit the number of classifications per frame to this number. If -1, then no limit
 // Run BNN on every region in a current frame, and? draw results onto the frame image
-void classifyRegions(cv::Mat &curFrame, std::vector<cv::Rect> &regions, std::vector<std::string> &classes, std::vector<unsigned int> &outputs, std::vector<float> &certainties, bool bundleRegions)
+void classifyRegions(cv::Mat &curFrame, std::vector<cv::Rect> &regions, std::vector<std::string> &classes, std::vector<unsigned int> &outputs, std::vector<float> &certainties, bool bundleRegions, std::vector<std::vector<unsigned int> > &detailed_results)
 {
 	cv::Mat rct;
 	unsigned int output;
@@ -88,7 +94,7 @@ void classifyRegions(cv::Mat &curFrame, std::vector<cv::Rect> &regions, std::vec
 		for(auto &r : regions)
 			rois.push_back(curFrame(r)); // Get the rectangle from the frame
 		
-		runBNN_multipleImages(rois, classes, outputs, certainties);	
+		runBNN_multipleImages(rois, classes, outputs, certainties, detailed_results);	
 	}
 	else
 	{
@@ -111,7 +117,8 @@ void classifyRegions(cv::Mat &curFrame, std::vector<cv::Rect> &regions, std::vec
 			if(std::remove(tmp_path.c_str()) != 0)
 				std::cout << "Failed to delete tmp file: " << tmp_path << std::endl;
 			
-			runBNN_image(out_path.c_str(), classes, output, certainty);
+			// Check detailed_results works for multiple regions of interest this way
+			runBNN_image(out_path.c_str(), classes, output, certainty, detailed_results[i]);
 			
 			// Delete .bin file
 			if(std::remove(out_path.c_str()) != 0)
@@ -139,7 +146,7 @@ void testBNN(const char* batch_path, int &output, float &certainty, int num_imag
 	return;
 }
 
-void runBNN_multipleImages(std::vector<cv::Mat> &imgs, std::vector<std::string> &classes, std::vector<unsigned int> &outputs, std::vector<float> &certainties)
+void runBNN_multipleImages(std::vector<cv::Mat> &imgs, std::vector<std::string> &classes, std::vector<unsigned int> &outputs, std::vector<float> &certainties, std::vector<std::vector<unsigned int> > &detailed_results)
 {	
 	// Save all the images (cv::Mat) to temp files
 	/*std::vector<std::string> tmp_paths(imgs.size());
@@ -176,13 +183,15 @@ void runBNN_multipleImages(std::vector<cv::Mat> &imgs, std::vector<std::string> 
 	results = inference_multiple(batch_path.c_str(), number_class, imageNumber, usecPerImage, enable_detail);
 	
 	// Get the results and the certainty
-	std::vector<unsigned int> r(number_class);
+	std::vector<unsigned int> r(number_class); // Stores all the results in a single array
 	unsigned int tmp; // Don't ask  - WHY DO I NEED THIS??
 	for(int i = 0; i < imgs.size(); i++)
 	{
 		// Overwrite previous
-		for(int j = 0; j < number_class; j++)
+		for(int j = 0; j < number_class; j++) {
+			detailed_results[i][j] = results[i*number_class + j];
 			r[j] = results[i*number_class + j];
+		}
 		
 		//std::cout << "r = "; print_vector(r); std::cout << std::endl;
 		tmp = getMaxIndex(r);
@@ -205,7 +214,9 @@ void runBNN_multipleImages(std::vector<cv::Mat> &imgs, std::vector<std::string> 
 }
 
 // Running BNN on an image (return index result)
-void runBNN_image(const char* path, std::vector<std::string> &classes, unsigned int &output, float &certainty)
+// Output = index (classification)
+// Certainty = float, square difference from max value and all the other classifications
+void runBNN_image(const char* path, std::vector<std::string> &classes, unsigned int &output, float &certainty, std::vector<unsigned int> &detailed_results)
 {
 	//unsigned int results[64]; // Allows up to 64 classes - maybe make it classes.size?
 	//int number_class = 10; // Remove magic numbers?
@@ -216,13 +227,17 @@ void runBNN_image(const char* path, std::vector<std::string> &classes, unsigned 
 	// unsigned int inference(const char* path, unsigned int results[64], int number_class, float *usecPerImage);
 	output = inference(path, results, number_class, usecPerImage);
 	
-	std::vector<unsigned int> truncated_results(number_class); // Only look at the results for the classes. Not the excess results padding
+	//std::vector<unsigned int> truncated_results(number_class); // Only look at the results for the classes. Not the excess results padding
 	for(int i = 0; i < number_class; i++)
 	{
-		truncated_results[i] = results[i];
+		//truncated_results[i] = results[i];
+		detailed_results[i] = results[i];
 	}
+	
+	//std::cout << "truncated_results = "; print_vector(truncated_results); std::cout << std::endl;
+	//std::cout << "detailed_results = "; print_vector(detailed_results); std::cout << std::endl;
 
-	certainty = calculate_certainty(truncated_results);
+	certainty = calculate_certainty(detailed_results);
 	
 	//std::cout << "------------------" << std::endl;
 	//std::cout << "Certainty = " << certainty << std::endl;
@@ -275,6 +290,17 @@ int main(int argc, char** argv)
         std::cerr << parser;
         return 1;
     }
+	
+	// Pre-populate history weights with exponential decays
+	for(int i = 0; i < HST_LEN; i++)
+	{
+		history_weights[i] = exp_decay(lambda, i);
+	}
+	
+	// Because push_back reads from opposite direction
+	// std::reverse(history_weights.begin(), history_weights.end()); 
+	
+	std::cout << "history weights = "; print_vector(history_weights); std::cout << std::endl;
 	
 	if (mode_arg) 
 	{                                                                                                                                       
@@ -371,7 +397,8 @@ int main(int argc, char** argv)
 			if(std::remove(tmp_path.c_str()) != 0)
 				std::cout << "Failed to delete tmp file: " << tmp_path << std::endl;
 			
-			runBNN_image(out_path.c_str(), classes, output, certainty);
+			std::vector<unsigned int> detailed_results(classes.size());
+			runBNN_image(out_path.c_str(), classes, output, certainty, detailed_results);
 			
 			// ----- Not using files ---- //
 
@@ -810,7 +837,8 @@ int main(int argc, char** argv)
 				if(std::remove(tmp_path.c_str()) != 0)
 					std::cout << "Failed to delete tmp file: " << tmp_path << std::endl;
 				
-				runBNN_image(out_path.c_str(), classes, output, certainty);
+				std::vector<unsigned int> detailed_results(classes.size());
+				runBNN_image(out_path.c_str(), classes, output, certainty, detailed_results);
 				double perc = ((double)i/image.cols) * 100;
 				
 				// original_classification is the classification of the image under no occlusion
@@ -881,7 +909,8 @@ int main(int argc, char** argv)
 				if(std::remove(tmp_path.c_str()) != 0)
 					std::cout << "Failed to delete tmp file: " << tmp_path << std::endl;
 				
-				runBNN_image(out_path.c_str(), classes, output, certainty);
+				std::vector<unsigned int> detailed_results(classes.size());
+				runBNN_image(out_path.c_str(), classes, output, certainty, detailed_results);
 				
 				if(i == 0)
 					original_classification = output;
@@ -999,6 +1028,9 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 	clock_t current_ticks, delta_ticks;
 	clock_t fps   = 0;
 	int frame_num = 0;
+	
+	std::vector<cv::Rect> prev_img_rois;
+	
 	while(true)
 	{
 		current_ticks = clock();
@@ -1016,7 +1048,7 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 		// Each mode needs to take a frame and calculate the regions of interest as a vector of rectangles
 		switch(mode)
 		{
-			case BACKGROUND_SUBTRACTION: {
+			case roi_mode::BACKGROUND_SUBTRACTION: {
 				/*
 				 *	Extract regions by diffusing and contouring the difference between adjacent frames
 				 */
@@ -1053,7 +1085,7 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 				//curFrame = diffFrame; // Temp
 			break; }
 		
-			case STRIDE: {
+			case roi_mode::STRIDE: {
 				/*
 				 * Tile the current frame and classify each tile. Classifications below the threshold will not be shown
 				 */
@@ -1062,7 +1094,7 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 				img_rois = strideImage(curFrame, vp.box_width, vp.box_height, vp.stride_xstep, vp.stride_ystep);
 			break; }
 		
-			case IMAGE_SIMPLIFICATION: {
+			case roi_mode::IMAGE_SIMPLIFICATION: {
 				/*
 				 * Simplify the colour scheme of the frame and then perform k-means clustering to identify regions
 				 */
@@ -1076,7 +1108,7 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 				//curFrame = simpleFrame; // Draw simplified frame
 			break; }
 				
-			case CUSTOM_METHOD: {
+			case roi_mode::CUSTOM_METHOD: {
 				/*
 				 * Experimental methods
 				 */
@@ -1118,7 +1150,7 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 				grayFrame.copyTo(prevFrame);
 			break; }
 				
-			case SINGLE_CENTER_BOX: {
+			case roi_mode::SINGLE_CENTER_BOX: {
 				/*
 				 * There will be a centered box that will be classified for each frame
 				 */
@@ -1138,6 +1170,7 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 				center_box.width  = w;
 				center_box.height = h;
 
+				vp.bundle_regions = false; // Only one ROI, so don't bundle
 				vp.threshold_certainty = 0; // Show whatever is classified, even if below threshold
 				img_rois.push_back(center_box);
 			break; }
@@ -1148,16 +1181,147 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 			img_rois = getSubset(img_rois, roi_limit); // Only get the first roi_limit regions of interest
 		
 		// Classify the regions of interest
- 		std::vector<unsigned int> outputs(img_rois.size());
+ 		std::vector<unsigned int> outputs(img_rois.size()); // outputs are the classification of each region (highest index)
 		std::vector<float> certainties(img_rois.size());
-		bool bundleImages = vp.bundle_regions;
+
+		std::vector<std::vector<unsigned int> > detailed_results;
+		detailed_results.resize(img_rois.size());
+		for (int i = 0; i < img_rois.size(); i++)
+			detailed_results[i].resize(classes.size());
 		
 		auto t1 = std::chrono::high_resolution_clock::now();
-		classifyRegions(curFrame, img_rois, classes, outputs, certainties, bundleImages);
+		classifyRegions(curFrame, img_rois, classes, outputs, certainties, vp.bundle_regions, detailed_results);
 		auto t2 = std::chrono::high_resolution_clock::now();
 		
-		auto duration = std::chrono::duration_cast<std::chrono::microseconds>( t2 - t1 ).count();
-		if(bundleImages)
+		bool use_tracking = true;
+		if(use_tracking)
+		{
+			std::vector<int> flagged_objects(scene_objects.size(), 0); // Objects that have already been attended to this frame 
+			for(int n = 0; n < img_rois.size(); n++)
+			{
+				bool new_object = true; // If this is a new region of interest
+				int obj_ind; // The index of the scee object corresponding to this img_roi
+				for(int j = 0; j < scene_objects.size(); j++)
+				{
+					// Check if this img_roi corresponds to this scene_object (if it overlaps)
+					if((img_rois[n] & scene_objects[j].pos).area() > 0 && flagged_objects[j] == 0)
+					{
+						flagged_objects[j] = 1;
+						obj_ind = j;
+						new_object = false; // This img_roi corresponds to a pre-existing object
+						
+						// Add the classification result to the objects history
+						scene_objects[j].result_history.insert(scene_objects[j].result_history.begin(), detailed_results[n]);
+						
+						if(scene_objects[j].result_history.size() > HST_LEN)
+							scene_objects[j].result_history.pop_back(); // Remove any element older than HST_LEN frames
+						
+						// Similarly for prev_points
+						scene_objects[j].prev_points.insert(scene_objects[j].prev_points.begin(), cv::Point(img_rois[n].x + img_rois[n].width/2, img_rois[n].y + img_rois[n].height/2));
+						
+						if(scene_objects[j].prev_points.size() > HST_LEN)
+							scene_objects[j].prev_points.pop_back(); // Remove any element older than HST_LEN frames
+					}
+				}
+				
+				if(new_object)
+				{
+					// Add this img_roi as a new scene object
+					scene_object so = scene_object();  
+					so.pos = img_rois[n];
+					so.prev_points.insert(so.prev_points.begin(), cv::Point(img_rois[n].x + img_rois[n].width/2, img_rois[n].y + img_rois[n].height/2));
+					
+					scene_objects.push_back(so);
+					obj_ind = scene_objects.size() - 1;
+					
+					std::cout << "Found a new object in the scene" << std::endl;
+				}
+				
+				// Update the output (classification) using weighted window
+				std::cout << "------------------------------" << std::endl;
+				for(int i = 0; i < scene_objects[obj_ind].result_history.size(); i++)
+				{
+					std::cout << "result_history[" << i << "]  = "; print_vector(scene_objects[obj_ind].result_history[i]); std::cout << std::endl;
+				}
+				
+				// The current output is the maximum index of the weighted sum of current and previous outputs
+				std::vector<unsigned int> adjusted_results(classes.size(), 0);
+				for(int i = 0; i < scene_objects[obj_ind].result_history.size(); i++)
+				{ // From most recent frame to oldest
+					for(int j = 0; j < classes.size(); j++)
+					{
+						adjusted_results[j] += (history_weights[i] * scene_objects[obj_ind].result_history[i][j]);
+					}
+				}
+				
+				std::cout << "adjusted_results = "; print_vector(adjusted_results); std::cout << std::endl;
+				
+				unsigned int adjusted_output = getMaxIndex(adjusted_results);
+				std::cout << "previously classified as a " << classes[outputs[n]] << std::endl;
+				std::cout << "now classified as a = " << classes[adjusted_output] << std::endl;
+				
+				std::cout << "------------------------------" << std::endl;
+				
+				// Overwrite current classification with weighted sum
+				outputs[n] = adjusted_output;
+			}
+		
+			std::vector<unsigned int> empty_results(classes.size(), 0);
+			for(int i = 0; i < flagged_objects.size(); i++)
+			{
+				if(flagged_objects[i] == 0)
+				{
+					// Will need to insert an empty set of classification results to shift them all back in time
+					scene_objects[i].result_history.insert(scene_objects[i].result_history.begin(), empty_results);
+					
+					if(scene_objects[i].result_history.size() > HST_LEN)
+						scene_objects[i].result_history.pop_back(); // Remove any element older than HST_LEN frames
+				}
+			}
+			
+		}
+		
+		//
+		
+		// Store previous classifications
+		// THE FOLLOWING WORKS WELL WITH CAMERA!! DONT REMOVE
+		/*if(mode == roi_mode::SINGLE_CENTER_BOX)
+		{
+			result_history.insert(result_history.begin(), detailed_results[0]);
+			// Only one region of interest, so look at first index of detailed_results
+			if(result_history.size() > HST_LEN)
+				result_history.pop_back(); // Remove any element older than HST_LEN frames
+			
+			std::cout << "------------------------------" << std::endl;
+			for(int i = 0; i < result_history.size(); i++)
+			{
+				std::cout << "result_history[" << i << "]  = "; print_vector(result_history[i]); std::cout << std::endl;
+			}
+			
+			// The current output is the maximum index of the weighted sum of current and previous outputs
+			std::vector<unsigned int> adjusted_results(classes.size(), 0);
+			for(int i = 0; i < result_history.size(); i++)
+			{ // From most recent frame to oldest
+				for(int j = 0; j < classes.size(); j++)
+				{
+					adjusted_results[j] += (history_weights[i] * result_history[i][j]);
+				}
+			}
+			
+			std::cout << "adjusted_results = "; print_vector(adjusted_results); std::cout << std::endl;
+			
+			unsigned int adjusted_output = getMaxIndex(adjusted_results);
+			std::cout << "previously classified as a " << classes[outputs[0]] << std::endl;
+			std::cout << "now classified as a = " << classes[adjusted_output] << std::endl;
+			
+			std::cout << "------------------------------" << std::endl;
+			
+			// Overwrite
+			outputs[0] = adjusted_output;
+		}*/
+		
+		auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
+		if(vp.bundle_regions)
 		{
 			std::cout << "Pipelined frame classification took " << duration << " microseconds" << std::endl;
 		}else{
@@ -1183,7 +1347,7 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 			//std::cout << "Rect: height=" << img_rois[i].height << ", width=" << img_rois[i].width << ", x=" << img_rois[i].x << ", y=" << img_rois[i].y << std::endl;
 			
 			// Label the rectangle with the result from the BNN
-			std::string certainty_s = std::to_string(certainties[i]); //THIS DOES NOT WORK!!
+			std::string certainty_s = std::to_string(certainties[i]);
 			//certainty_s.erase(certainty_s.find_last_not_of('0') + 2, std::string::npos); // Remove trailing zeros
 			std::cout << classes[outputs[i]] + ": " + certainty_s << std::endl;
 			int area = img_rois[i].width * img_rois[i].height;
@@ -1191,18 +1355,31 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 			putText(curFrame, text, cv::Point(img_rois[i].x, img_rois[i].y), cv::FONT_HERSHEY_PLAIN, 2, drawColour, LINE_THICKNESS);
 		}	  
 		
+		// Draw all the scene objects as dots(RECTS) on the screen
+		for(int i = 0; i < scene_objects.size(); i++)
+		{
+			int radius = 5;
+			for (int j = 0; j < scene_objects[i].prev_points.size(); j++)
+				circle(curFrame, cvPoint(scene_objects[i].prev_points[j].x, scene_objects[i].prev_points[j].y), radius, colourList[i % colourList.size()], -1, 8, 0);
+		}
+		
 		// fps box at top right of screen
-		std::stringstream fps_ss;
+		/*std::stringstream fps_ss;
 		fps_ss << "FPS: ";
 		fps_ss << fps;
 		putText(curFrame, fps_ss.str(), cv::Point(20, 40), cv::FONT_HERSHEY_PLAIN, 5, cv::Scalar(255,255,0));
-		std::cout << "FPS = " << fps << std::endl;
+		std::cout << "FPS = " << fps << std::endl;*/
+		
+		std::stringstream num_objs_ss;
+		num_objs_ss << "#Objects: ";
+		num_objs_ss << scene_objects.size();
+		putText(curFrame, num_objs_ss.str(), cv::Point(20, 50), cv::FONT_HERSHEY_PLAIN, 4, cv::Scalar(255,255,0), 2);
 
-		std::stringstream frame_num_ss;
+		/*std::stringstream frame_num_ss;
 		frame_num_ss << "Frame Number: ";
 		frame_num_ss << frame_num;
-		putText(curFrame, frame_num_ss.str(), cv::Point(20, 80), cv::FONT_HERSHEY_PLAIN, 5, cv::Scalar(255,255,0)); 
-		std::cout << "Frame Number = " << frame_num << std::endl;
+		putText(curFrame, frame_num_ss.str(), cv::Point(20, 80), cv::FONT_HERSHEY_PLAIN, 7, cv::Scalar(255,255,0)); 
+		std::cout << "Frame Number = " << frame_num << std::endl;*/
 		
 		cv::imshow("Final video", curFrame);
 		
@@ -1211,6 +1388,9 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 			// Write current frame to output file
 			outputVideo << curFrame;
 		}
+		
+		// Store previous extracted regions of interest
+		prev_img_rois = img_rois;
 		
 		//if(frame_num == 43)
 		//	cv::waitKey(0);

@@ -96,7 +96,7 @@ extern "C" void load_parameters(const char* path)
 
 // Custom method that directly takes the cv::Mat rather than a path (accepts in cifar10 format)
 //[32][32][3]
-extern "C" unsigned int inference_arr(uint8_t * img_in, unsigned int results[64], int number_class, float *usecPerImage)
+/*extern "C" unsigned int inference_arr(uint8_t * img_in, unsigned int results[64], int number_class, float *usecPerImage)
 {
 	FoldedMVInit("cnv-pynq");
 	
@@ -123,7 +123,7 @@ extern "C" unsigned int inference_arr(uint8_t * img_in, unsigned int results[64]
 	std::vector<unsigned int> class_result;
 	float usecPerImage_int;
 	class_result=testPrebuiltCIFAR10_from_image<8, 16>(test_images, number_class, usecPerImage_int);
-}
+}*/
 
 extern "C" unsigned int inference(const char* path, unsigned int results[64], int number_class, float *usecPerImage)
 {

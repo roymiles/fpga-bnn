@@ -3,7 +3,7 @@
 #include <map>      // std::map - enum LUT
 #include <string>   // std::to_string
 #include <iostream> // std::cout
-#include <math.h> 	// std::pow
+#include <math.h> 	// std::pow, std::exp
 #include <sstream>  // std::ostringstream
 
 // Generic debugging
@@ -112,26 +112,31 @@ inline void print_vector(std::vector<T> &vec)
 
 template<typename T>
 inline std::vector<float> normalise(std::vector<T> &vec)
-{
-#if DEBUG == 1
-	std::cout << "normalise vec = ";
-	print_vector(vec);
-	std::cout << std::endl;
-#endif	
-	
+{	
 	std::vector<float> cp(vec.begin(), vec.end());
 	T mx = *max_element(std::begin(cp), std::end(cp));
 	
 	for(auto &elem : cp)
 		elem = (float)elem / mx;
 	
-#if DEBUG == 1
-	std::cout << "normalise cp = ";
-	print_vector(cp);
-	std::cout << std::endl;
-#endif
-	
 	return cp;
+}
+
+template<typename T>
+float exp_decay(T lambda, int t, int N = 1)
+{
+	return N * std::exp(-(lambda * (T)t));
+}
+
+template<typename T1, typename T2>
+std::vector<T1> scale_vector(std::vector<T1> &in, T2 factor)
+{
+	std::vector<T1> out;
+	
+	for(auto const &v : in)
+	{
+		out.push_back(v * factor);
+	}
 }
 
 template<typename T>
