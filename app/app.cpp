@@ -274,6 +274,8 @@ int main(int argc, char** argv)
 	args::ValueFlag<int> bundle_regions_arg(parser, "bool", "Enable/disable region bundling. This drastically increasing the throughput by calling the BNN in a single call and avoiding unnecessary I/O operations", {"bundle_regions"});
 	
 	args::ValueFlag<int> adaptive_thresholding_arg(parser, "bool", "Enable/disable adaptive thresholding. If disabled, a hard threshold will be used", {"adaptive_thresholding"});
+	args::ValueFlag<int> motion_tracking_arg(parser, "bool", "Enable/disable motion tracking. Track objects across multiple frames. Must be enabled for the classification window", {"motion_tracking"});
+	args::ValueFlag<int> classification_window_arg(parser, "bool", "Enable/disable classification window. This uses the past 32 classifications and weights them accordingly", {"classification_window"});
 	
     try
     {
@@ -314,6 +316,8 @@ int main(int argc, char** argv)
 		vp.threshold_area = (threshold_area_arg ? static_cast<int>(args::get(threshold_area_arg)) : 500);
 		vp.bundle_regions = (bundle_regions_arg ? static_cast<bool>(args::get(bundle_regions_arg)) : true);
 		vp.adaptive_thresholding = (adaptive_thresholding_arg ? static_cast<bool>(args::get(adaptive_thresholding_arg)) : true);
+		vp.motion_tracking = (motion_tracking_arg ? static_cast<bool>(args::get(motion_tracking_arg)) : true);
+		vp.classification_window = (classification_window_arg ? static_cast<bool>(args::get(classification_window_arg)) : true);
 		
 		std::cout << "Dilation val: " << vp.dilation_val << std::endl;
 		std::cout << "Threshold val: " << vp.threshold_val << std::endl;
@@ -1193,9 +1197,17 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 		classifyRegions(curFrame, img_rois, classes, outputs, certainties, vp.bundle_regions, detailed_results);
 		auto t2 = std::chrono::high_resolution_clock::now();
 		
-		bool use_tracking = true;
-		if(use_tracking)
+		auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
+		if(vp.bundle_regions)
 		{
+			std::cout << "Pipelined frame classification took " << duration << " microseconds" << std::endl;
+		}else{
+			std::cout << "Not pipelined frame classification took " << duration << " microseconds" << std::endl;
+		}		
+		
+		if(vp.motion_tracking)
+		{
+			auto t3 = std::chrono::high_resolution_clock::now();
 			std::vector<int> flagged_objects(scene_objects.size(), 0); // Objects that have already been attended to this frame 
 			for(int n = 0; n < img_rois.size(); n++)
 			{
@@ -1263,7 +1275,8 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 				std::cout << "------------------------------" << std::endl;
 				
 				// Overwrite current classification with weighted sum
-				outputs[n] = adjusted_output;
+				if(vp.classification_window)
+					outputs[n] = adjusted_output;
 			}
 		
 			std::vector<unsigned int> empty_results(classes.size(), 0);
@@ -1278,7 +1291,10 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 						scene_objects[i].result_history.pop_back(); // Remove any element older than HST_LEN frames
 				}
 			}
+			auto t4 = std::chrono::high_resolution_clock::now();
 			
+			auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t4 - t3).count();
+			std::cout << "Motion tracking and classification windowing took " << duration << " microseconds" << std::endl;
 		}
 		
 		//
@@ -1319,15 +1335,7 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 			// Overwrite
 			outputs[0] = adjusted_output;
 		}*/
-		
-		auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
-		if(vp.bundle_regions)
-		{
-			std::cout << "Pipelined frame classification took " << duration << " microseconds" << std::endl;
-		}else{
-			std::cout << "Not pipelined frame classification took " << duration << " microseconds" << std::endl;
-		}
-
+	
 		cv::Scalar drawColour;
  		for(int i = 0; i < img_rois.size(); i++)
 		{
@@ -1359,8 +1367,9 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 		for(int i = 0; i < scene_objects.size(); i++)
 		{
 			int radius = 5;
-			for (int j = 0; j < scene_objects[i].prev_points.size(); j++)
-				circle(curFrame, cvPoint(scene_objects[i].prev_points[j].x, scene_objects[i].prev_points[j].y), radius, colourList[i % colourList.size()], -1, 8, 0);
+			for (int j = 1; j < scene_objects[i].prev_points.size(); j++)
+				line(curFrame, scene_objects[i].prev_points[j], scene_objects[i].prev_points[j-1], colourList[i % colourList.size()], -1, 8, 0);
+				//circle(curFrame, cvPoint(scene_objects[i].prev_points[j].x, scene_objects[i].prev_points[j].y), radius, colourList[i % colourList.size()], -1, 8, 0);
 		}
 		
 		// fps box at top right of screen

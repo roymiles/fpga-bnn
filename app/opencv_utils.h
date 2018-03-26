@@ -53,6 +53,9 @@ struct video_parameters
 	int target_box_count;
 	int dilation_val; // Any classification below this threshold is ignored
 	
+	bool motion_tracking;
+	bool classification_window;
+	
 	bool bundle_regions;
 	bool adaptive_thresholding;
 };
