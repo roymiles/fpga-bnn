@@ -299,11 +299,12 @@ void FoldedMVLoadLayerMem(std::string dir, unsigned int layerNo, unsigned int pe
 #include <vector>
 
 DonutDriver * thePlatform = 0;
+DonutDriver * thePlatform2 = 0;
 void * accelBufIn, * accelBufOut;
 ExtMemWord * bufIn, * bufOut;
 
-void * accelBufCur, * accelBufOutImg;
-uint8_t * bufCur, * bufOutImg;
+void * accelBufCur, * accelBufPrev, * accelBufOutImg;
+uint8_t * bufCur, * bufPrev, * bufOutImg;
 //hls::Mat<IMG_ROWS, IMG_COLS, HLS_8UC1> * bufCur, * bufOutImg;
 
 // register map for FoldedMV:
@@ -399,7 +400,16 @@ void ExecAccel() {
   thePlatform->writeJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_AP_CTRL, 1);
   while((thePlatform->readJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_AP_CTRL) & 0x2) == 0)
   {
-	usleep(1);
+	usleep(10);
+  }
+}
+
+void ExecAccel2() { // FOR BACKGROUNDSUBTRACTION IP
+  // invoke accelerator and wait for result
+  thePlatform2->writeJamRegAddr(XBACKGROUNDSUBTRACTION_CONTROL_ADDR_AP_CTRL, 1);
+  while((thePlatform2->readJamRegAddr(XBACKGROUNDSUBTRACTION_CONTROL_ADDR_AP_CTRL) & 0x2) == 0)
+  {
+	usleep(10);
   }
 }
 
@@ -432,6 +442,9 @@ void FoldedMVMemSet(unsigned int targetLayer, unsigned int targetMem, unsigned i
 void FoldedMVInit(const char * attachName) {
     thePlatform = initPlatform();
     thePlatform->attach(attachName);
+	
+	thePlatform2 = initPlatform2();
+	thePlatform2->attach("hey");
 
     // allocate input/output buffers
     // TODO should be dynamically sized based on the largest I/O
@@ -449,8 +462,13 @@ void FoldedMVInit(const char * attachName) {
 		//bufCur = new hls::Mat<IMG_ROWS, IMG_COLS, HLS_8UC1>;
         if (!bufCur) throw "Failed to allocated host buffer - bufCur";
     }
-    if (!bufOutImg) {
-        bufOutImg = new uint8_t[OUTIMG_BUF_ENTRIES];
+    if (!bufPrev) {
+        bufPrev = new uint8_t[PREV_BUF_ENTRIES];
+		//bufPrev = new hls::Mat<IMG_ROWS, IMG_COLS, HLS_8UC1>;
+        if (!bufPrev) throw "Failed to allocated host buffer - bufPrev";
+    }
+    if (!bufOutImg) { 
+		bufOutImg = new uint8_t[OUTIMG_BUF_ENTRIES];
 		//bufOutImg = new hls::Mat<IMG_ROWS, IMG_COLS, HLS_8UC1>;
         if (!bufOutImg) throw "Failed to allocated host buffer - bufOutImg";
     }
@@ -463,35 +481,41 @@ void FoldedMVInit(const char * attachName) {
         if (!accelBufOut) throw "Failed to allocate accel buffer - accelBufOut";
     }
 
-    if(!accelBufCur) {
+	if(!accelBufCur) {
 		std::cout << "Allocating " << CUR_BUF_ENTRIES * sizeof(uint8_t) << " for accelBufCur" << std::endl;
-		accelBufCur = thePlatform->allocAccelBuffer(CUR_BUF_ENTRIES * sizeof(uint8_t));
+		accelBufCur = thePlatform2->allocAccelBuffer(CUR_BUF_ENTRIES * sizeof(uint8_t));
         //accelBufCur = thePlatform->allocAccelBuffer(IMG_ROWS * IMG_COLS * 8);
         if (!accelBufCur) throw "Failed to allocate accel buffer - accelBufCur";
 	}
 	
+    if(!accelBufPrev) {
+		std::cout << "Allocating " << PREV_BUF_ENTRIES * sizeof(uint8_t) << " for accelBufPrev" << std::endl;
+		accelBufPrev = thePlatform2->allocAccelBuffer(PREV_BUF_ENTRIES * sizeof(uint8_t));
+        //accelBufPrev = thePlatform->allocAccelBuffer(IMG_ROWS * IMG_COLS * 8);
+        if (!accelBufPrev) throw "Failed to allocate accel buffer - accelBufPrev";
+	}
+	
 	if(!accelBufOutImg) {
 		std::cout << "Allocating " << OUTIMG_BUF_ENTRIES * sizeof(uint8_t) << " for accelBufOutImg" << std::endl;
-        accelBufOutImg = thePlatform->allocAccelBuffer(OUTIMG_BUF_ENTRIES * sizeof(uint8_t));
+        accelBufOutImg = thePlatform2->allocAccelBuffer(OUTIMG_BUF_ENTRIES * sizeof(uint8_t));
+		//accelBufOutImg = thePlatform->allocAccelBuffer(IMG_ROWS * IMG_COLS * 8);
         if (!accelBufOutImg) throw "Failed to allocate accel buffer - accelBufOutImg";
     }
 
-	/*std::cout << "accelBufIn = " << accelBufIn << std::endl;
-	std::cout << "accelBufOut = " << accelBufOut << std::endl;
+	//std::cout << "accelBufIn = " << accelBufIn << std::endl;
+	//std::cout << "accelBufOut = " << accelBufOut << std::endl;
 	std::cout << "accelBufCur = " << accelBufCur << std::endl;
-	//std::cout << "accelBufPrev = " << accelBufPrev << std::endl;
+	std::cout << "accelBufPrev = " << accelBufPrev << std::endl;
 	std::cout << "accelBufOutImg = " << accelBufOutImg << std::endl;
-	//std::cout << "accelBufDebug = " << accelBufDebug << std::endl;*/
 	
     // set up I/O buffer addresses for the accelerator
     thePlatform->write64BitJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_IN_V_DATA, (AccelDblReg) accelBufIn); // 0x10
     thePlatform->write64BitJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_OUT_V_DATA, (AccelDblReg) accelBufOut); // 0x1c
 	
 	// Using AccelReg (32bit) for these buffers write64BitJamRegAddr|AccelDblReg, writeJamRegAddr|AccelReg
-    thePlatform->writeJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_CUR_V_DATA, (AccelReg) accelBufCur); // 0x5c
-	//thePlatform->writeJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_PREV_V_DATA, (AccelReg) accelBufPrev);
-    thePlatform->writeJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_OUT_IMG_V_DATA, (AccelReg) accelBufOutImg); // 0x68
-    //thePlatform->write64BitJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_DEBUG_V_DATA, (AccelDblReg) accelBufDebug); // 0x84
+    thePlatform2->writeJamRegAddr(XBACKGROUNDSUBTRACTION_CONTROL_ADDR_CUR_DATA, (AccelReg) accelBufCur); // 0x5c
+	thePlatform2->writeJamRegAddr(XBACKGROUNDSUBTRACTION_CONTROL_ADDR_PREV_DATA, (AccelReg) accelBufPrev);
+    thePlatform2->writeJamRegAddr(XBACKGROUNDSUBTRACTION_CONTROL_ADDR_OUT_IMG_DATA, (AccelReg) accelBufOutImg); // 0x68
 
 	//thePlatform->writeJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_DOIMAGE_DATA, 0);
     //thePlatform->writeJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_DOINIT_DATA, 0); // 0x28
@@ -502,12 +526,14 @@ void FoldedMVDeinit() {
     delete bufOut;
 
     delete bufCur;
+	delete bufPrev;
     delete bufOutImg;
 	
     bufIn = 0;
     bufOut = 0;
 
     bufCur = 0;
+	bufPrev = 0;
     bufOutImg = 0;
 	
     if (thePlatform && accelBufIn) thePlatform->deallocAccelBuffer(accelBufIn);
@@ -515,9 +541,11 @@ void FoldedMVDeinit() {
     if (thePlatform && accelBufOut) thePlatform->deallocAccelBuffer(accelBufOut);
     accelBufOut = 0;
 
-    if (thePlatform && accelBufCur) thePlatform->deallocAccelBuffer(accelBufCur);
+    if (thePlatform && accelBufCur) thePlatform2->deallocAccelBuffer(accelBufCur);
     accelBufCur = 0;
-    if (thePlatform && accelBufOutImg) thePlatform->deallocAccelBuffer(accelBufOutImg);
+    if (thePlatform && accelBufPrev) thePlatform2->deallocAccelBuffer(accelBufPrev);
+    accelBufPrev = 0;
+    if (thePlatform && accelBufOutImg) thePlatform2->deallocAccelBuffer(accelBufOutImg);
     accelBufOutImg = 0;
 
     deinitPlatform(thePlatform);

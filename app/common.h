@@ -26,7 +26,7 @@
  * where n determines the spread of the certainties (sensitivity to small changes in results)
  * the larger it is, the smaller non-zero results will get and so the sum reduces => increased classification output
  */
-int certainty_spread  = 10;
+//int certainty_spread  = 10;
 
 const std::string BNN_ROOT_DIR  = "/opt/python3.6/lib/python3.6/site-packages/bnn/";
 const std::string BNN_LIB_DIR   = "/opt/python3.6/lib/python3.6/site-packages/bnn/src/network/output/sw/";
@@ -140,9 +140,10 @@ std::vector<T1> scale_vector(std::vector<T1> &in, T2 factor)
 }
 
 template<typename T>
-float calculate_certainty(std::vector<T> &vec)
+float calculate_certainty(std::vector<T> &vec, int certainty_spread)
 {
 	// Normalise the vector
+	/*
 	std::vector<float> norm_vec = normalise(vec);
 	
 	float sum = 0;
@@ -156,6 +157,22 @@ float calculate_certainty(std::vector<T> &vec)
 	
 	// Max element = 1 / sum 
 	return 1.0 / sum;
+	*/
+	
+	// Copy vector
+	std::vector<int> vec2;
+	for(auto const &elem : vec)
+	{
+		vec2.push_back(elem);
+	}
+	
+	// Smallest first
+	std::sort(vec2.begin(), vec2.end());
+	
+	int big_gap = vec2[vec2.size() -1] - vec2[0];
+	int small_gap = vec2[vec2.size() -1] - vec2[vec2.size() -2];
+	
+	return (float)(small_gap^certainty_spread)/(float)big_gap;
 }
 
 template<typename T>

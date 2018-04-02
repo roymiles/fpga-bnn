@@ -48,12 +48,15 @@
 #include "tiny_cnn/tiny_cnn.h"
 #include "ap_int.h"
 #include "xblackboxjam_hw.h"
+#include "xbackgroundsubtraction_hw.h"
 #include "common.h" // ROWS, COLS
 
-#ifdef USING_HLS_OPENCV
-	#include <hls_video.h>
+//#define HLS_NO_XIL_FPO_LIB
+//#include "hls_video.h"
+//#ifdef USING_HLS_OPENCV
+	//#include <hls_video.h>
 	//#include <hls_stream.h>
-#endif
+//#endif
 
 using namespace std;
 
@@ -82,10 +85,14 @@ const unsigned int bitsPerUint8_t = sizeof(uint8_t) * 8;
 	// 180 * 120 = 21600
 	// 90 * 60   = 5400
 	// 45 * 30   = 1350
-	//#define CUR_BUF_ENTRIES 5400
-	//#define OUTIMG_BUF_ENTRIES 5400
-	#define CUR_BUF_ENTRIES 345600
-	#define OUTIMG_BUF_ENTRIES 345600
+	//#define CUR_BUF_ENTRIES 345600
+	//#define PREV_BUF_ENTRIES 345600
+	//#define OUTIMG_BUF_ENTRIES 345600
+	// 174x144 = 25344
+	// 640x480 = 307200
+	#define CUR_BUF_ENTRIES 307200
+	#define PREV_BUF_ENTRIES 307200
+	#define OUTIMG_BUF_ENTRIES 307200
 //#endif
 
 void binarizeAndPack(const tiny_cnn::vec_t& in, ExtMemWord* out, unsigned int inBufSize = INPUT_BUF_ENTRIES);
@@ -155,14 +162,16 @@ void quantiseAndPack(const T& in, ExtMemWord* out, unsigned int inBufSize = INPU
 #include <vector>
 
 extern DonutDriver * thePlatform;
+extern DonutDriver * thePlatform2;
 extern void * accelBufIn, * accelBufOut;
 extern ExtMemWord * bufIn, * bufOut;
 
-extern void * accelBufCur, * accelBufOutImg;
+extern void * accelBufCur, * accelBufPrev, * accelBufOutImg;
 //extern hls::Mat<IMG_ROWS, IMG_COLS, HLS_8UC1> * bufCur, * bufOutImg;
-extern uint8_t * bufCur, * bufOutImg;
+extern uint8_t * bufCur, * bufPrev, * bufOutImg;
 
 void ExecAccel();
+void ExecAccel2();
 
 template <unsigned int inWidth, unsigned int SIMDWidth>
 void FixedFoldedMVOffload(const tiny_cnn::vec_t& in,
@@ -426,7 +435,7 @@ std::vector<unsigned int> testPrebuiltCIFAR10_multiple_images(std::vector<tiny_c
 
 //void doImageStuff_acc(hls::Mat<IMG_ROWS, IMG_COLS, HLS_8UC1> &cur, hls::Mat<IMG_ROWS, IMG_COLS, HLS_8UC1> &output)
 template<unsigned int NROWS, unsigned int NCOLS> // HEIGHT, WIDTH
-void doImageStuff_acc(std::vector<uint8_t> &cur, std::vector<uint8_t> &output, unsigned int count)
+void doImageStuff_acc(std::vector<uint8_t> &cur, std::vector<uint8_t> &prev, std::vector<uint8_t> &output, unsigned int count)
 {	
 	std::cout << "Packing inputs..." << std::endl;
     // # of uint8_t per image
@@ -446,6 +455,11 @@ void doImageStuff_acc(std::vector<uint8_t> &cur, std::vector<uint8_t> &output, u
 		std::cout << "count * psi = " << count * psi << std::endl;
         throw "Not enough space in accelBufCur";
 	}
+	if (PREV_BUF_ENTRIES < count * psi) {
+		std::cout << "PREV_BUF_ENTRIES = " << PREV_BUF_ENTRIES << std::endl;
+		std::cout << "count * psi = " << count * psi << std::endl;
+        throw "Not enough space in accelBufPrev";
+	}
     if (OUTIMG_BUF_ENTRIES < count * pso) {
 		std::cout << "OUTIMG_BUF_ENTRIES = " << OUTIMG_BUF_ENTRIES << std::endl;
 		std::cout << "count * pso = " << count * pso << std::endl;
@@ -455,8 +469,11 @@ void doImageStuff_acc(std::vector<uint8_t> &cur, std::vector<uint8_t> &output, u
 	std::cout << "psi = " << psi << ", pso = " << pso << ", count = " << count << std::endl;
 	
     // Allocate host-side buffers for packed input and outputs
-	uint8_t* packedImage = new uint8_t[(count * psi)];
+	uint8_t* packedImageCur = new uint8_t[(count * psi)];
+	uint8_t* packedImagePrev = new uint8_t[(count * psi)];
 	uint8_t* packedOut = new uint8_t[(count * pso)];	
+	//ap_uint<1>* packedImage = new ap_uint<1>[(count * psi)];
+	//ap_uint<1>* packedOut = new ap_uint<1>[(count * pso)];	
 	
 	//hls::Mat<IMG_ROWS, IMG_COLS, HLS_8UC1>* packedImage = new hls::Mat<IMG_ROWS, IMG_COLS, HLS_8UC1>;
 	//hls::Mat<IMG_ROWS, IMG_COLS, HLS_8UC1>* packedOut = new hls::Mat<IMG_ROWS, IMG_COLS, HLS_8UC1>;
@@ -464,7 +481,8 @@ void doImageStuff_acc(std::vector<uint8_t> &cur, std::vector<uint8_t> &output, u
 	//quantiseAndPack<inWidth, 1>(input_image, &packedImage[0], psi);
 
     for (unsigned int i = 0; i < count*psi; i++) {
-		packedImage[i] = cur[i];
+		packedImagePrev[i] = prev[i];
+		packedImageCur[i] = cur[i];
     }	
 	
 	std::cout << "Finished packing inputs" << std::endl;
@@ -473,29 +491,31 @@ void doImageStuff_acc(std::vector<uint8_t> &cur, std::vector<uint8_t> &output, u
 	
     // copy inputs to accelerator
     //thePlatform->copyBufferHostToAccel((void*)&cur, accelBufCur, IMG_ROWS * IMG_COLS * 8 * count * psi);
-	thePlatform->copyBufferHostToAccel((void*)packedImage, accelBufCur, sizeof(uint8_t) * count * psi);
-	//thePlatform->copyBufferHostToAccel((void*)&cur, accelBufCur, sizeof(uint8_t) * count * psi);
+	//thePlatform->copyBufferHostToAccel((void*)packedImage, accelBufCur, sizeof(ap_uint<1>) * count * psi);
+	thePlatform2->copyBufferHostToAccel((void*)packedImageCur, accelBufCur, sizeof(uint8_t) * count * psi);
+	std::cout << "copied cur" << std::endl;
+	thePlatform2->copyBufferHostToAccel((void*)packedImagePrev, accelBufPrev, sizeof(uint8_t) * count * psi);
     
 	std::cout << "Finished copying host buffer to accel" << std::endl;
 	
 	// Enable doImage
-	thePlatform->writeJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_DOIMAGE_DATA, 1); // 0x74
+	//thePlatform->writeJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_DOIMAGE_DATA, 1); // 0x74
   	
     // Set number of blocks to dilate
-    thePlatform->writeJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_NUMREPS_DATA, count); // 0x54	
+    //thePlatform->writeJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_NUMREPS_DATA, count); // 0x54	
 	
 	std::cout << "ExecAccel..." << std::endl;
 	
     auto t1 = chrono::high_resolution_clock::now();
-    ExecAccel();
+    ExecAccel2();
     auto t2 = chrono::high_resolution_clock::now();
 	
 	std::cout << "Finished ExecAccel" << std::endl;
 	
-	thePlatform->writeJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_DOIMAGE_DATA, 0); // 0x74
+	//thePlatform->writeJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_DOIMAGE_DATA, 0); // 0x74
 	
     // copy results back to host
-    thePlatform->copyBufferAccelToHost(accelBufOutImg, (void*)packedOut, sizeof(uint8_t) * count * pso);
+    thePlatform2->copyBufferAccelToHost(accelBufOutImg, (void*)packedOut, sizeof(uint8_t) * count * pso);
 	//thePlatform->copyBufferAccelToHost(accelBufOutImg, (void*)&output, sizeof(uint8_t) * count * pso);
 	
 	// Put the packed output into a result vector container
@@ -531,14 +551,15 @@ void doImageStuff_acc(std::vector<uint8_t> &cur, std::vector<uint8_t> &output, u
 	
 	std::cout << "Took " << usecPerBlockImage << "us to dilate the image " << std::endl;
 	
-	delete[] packedImage;
+	delete[] packedImageCur;
+	delete[] packedImagePrev;
     delete[] packedOut;
 	
 	//return result;
 }
 
-/*template<unsigned int NROWS, unsigned int NCOLS> // HEIGHT, WIDTH
-void doImageStuff_acc_arr(uint8_t* &cur, uint8_t* &output, unsigned int count)
+template<unsigned int NROWS, unsigned int NCOLS> // HEIGHT, WIDTH
+void doImageStuff_acc_arr(uint8_t * cur, uint8_t * prev, uint8_t* output, unsigned int count)
 {
 	const unsigned int psi = NROWS * NCOLS;
     const unsigned int pso = psi;
@@ -549,6 +570,11 @@ void doImageStuff_acc_arr(uint8_t* &cur, uint8_t* &output, unsigned int count)
 		std::cout << "count * psi = " << count * psi << std::endl;
         throw "Not enough space in accelBufCur";
 	}
+	if (PREV_BUF_ENTRIES < count * psi) {
+		std::cout << "PREV_BUF_ENTRIES = " << PREV_BUF_ENTRIES << std::endl;
+		std::cout << "count * psi = " << count * psi << std::endl;
+        throw "Not enough space in accelBufPrev";
+	}
     if (OUTIMG_BUF_ENTRIES < count * pso) {
 		std::cout << "OUTIMG_BUF_ENTRIES = " << OUTIMG_BUF_ENTRIES << std::endl;
 		std::cout << "count * pso = " << count * pso << std::endl;
@@ -556,24 +582,25 @@ void doImageStuff_acc_arr(uint8_t* &cur, uint8_t* &output, unsigned int count)
 	}
 	
     // copy inputs to accelerator
-	thePlatform->copyBufferHostToAccel((void*)&cur, accelBufCur, sizeof(uint8_t) * count * psi);  
+	thePlatform2->copyBufferHostToAccel((void*)cur, accelBufCur, sizeof(uint8_t) * count * psi);  
+	thePlatform2->copyBufferHostToAccel((void*)prev, accelBufPrev, sizeof(uint8_t) * count * psi);  
 	// Enable doImage
-	thePlatform->writeJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_DOIMAGE_DATA, 1); // 0x74
+	//thePlatform->writeJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_DOIMAGE_DATA, 1); // 0x74
     // Set number of blocks to dilate
-    thePlatform->writeJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_NUMREPS_DATA, count); // 0x54	
+    //thePlatform->writeJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_NUMREPS_DATA, count); // 0x54	
 	
     auto t1 = chrono::high_resolution_clock::now();
-    ExecAccel();
+    ExecAccel2();
     auto t2 = chrono::high_resolution_clock::now();
 	
 
-	thePlatform->writeJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_DOIMAGE_DATA, 0); // 0x74
+	//thePlatform->writeJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_DOIMAGE_DATA, 0); // 0x74
 	
     // copy results back to host
-    thePlatform->copyBufferAccelToHost(accelBufOutImg, (void*)&output, sizeof(uint8_t) * count * pso);
+    thePlatform2->copyBufferAccelToHost(accelBufOutImg, (void*)output, sizeof(uint8_t) * count * pso);
 	
     auto duration = chrono::duration_cast<chrono::microseconds>(t2 - t1).count();
     float usecPerBlockImage = (float)duration / (count);
 	
 	std::cout << "Took " << usecPerBlockImage << "us to dilate the image " << std::endl;
-}*/
+}

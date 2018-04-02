@@ -188,10 +188,10 @@ int numXSteps = -1;
 int numYSteps = -1;
 std::vector<cv::Rect> strideImage(cv::Mat &img, int width, int height, int xStep, int yStep)
 {
-#if DEBUG == 1
+
 	std::cout << "strideImage { width = " << width << ", height = " << height << ", xStep = " << xStep << ", yStep = " << yStep << " }" << std::endl;
 	std::cout << "strideImage { img.cols = " << img.cols << ", img.rows = " << img.rows << " }" << std::endl;
-#endif
+
 	if (numXSteps == -1)
 		numXSteps = ceil((img.cols - width) / xStep);
 
@@ -207,17 +207,13 @@ std::vector<cv::Rect> strideImage(cv::Mat &img, int width, int height, int xStep
 		for (int y = 0; y < img.rows - height; y += yStep)
 		{
 			// Ignore top and bottom rows
-			if(y == 0 || y + yStep >= img.rows - height)
-				continue;
+			//if(y == 0 || y + yStep >= img.rows - height)
+			//	continue;
 			
 			image_roi.push_back(cv::Rect(x, y, width, height));
 			i++;
 		}
 	}
-
-#if DEBUG == 1	
-	std::cout << "Striding over " << image_roi.size() << " rectangles" << std::endl;
-#endif
 
 	return image_roi;
 }
@@ -235,8 +231,15 @@ cv::Mat imageSimplification(cv::Mat &src)
 	cv::Mat labels;
 	int attempts = 1;
 	cv::Mat centers;
-	cv::kmeans(samples, clusterCount, labels, cv::TermCriteria(CV_TERMCRIT_ITER | CV_TERMCRIT_EPS, 10000, 0.0001), attempts, KMEANS_PP_CENTERS, centers);
 
+    auto t1 = chrono::high_resolution_clock::now();
+	cv::kmeans(samples, clusterCount, labels, cv::TermCriteria(CV_TERMCRIT_ITER | CV_TERMCRIT_EPS, 10000, 0.0001), attempts, KMEANS_PP_CENTERS, centers);
+	auto t2 = chrono::high_resolution_clock::now();
+	
+    auto duration = chrono::duration_cast<chrono::microseconds>(t2 - t1).count();
+	
+	std::cout << "Took " << duration << "us to apply kmeans to the image " << std::endl;	
+	
 	cv::Mat new_image(src.size(), src.type());
 	for (int y = 0; y < src.rows; y++)
 	{

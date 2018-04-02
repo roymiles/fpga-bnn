@@ -33,7 +33,7 @@
 #include "opencv_utils.h"
 #include "args.hxx"
 
-#define HLS_NO_XIL_FPO_LIB
+//#define HLS_NO_XIL_FPO_LIB
 //#ifdef USING_HLS_OPENCV
 	//#include <hls_opencv.h>
 	//#include <hls_video.h>
@@ -48,6 +48,7 @@
 // This is dependant on the compilation method.
 extern "C" {
 	void load_parameters(const char* path);
+	void init_test();
 	unsigned int inference(const char* path, unsigned int results[64], int number_class, float *usecPerImage);
 	unsigned int* inference_multiple(const char* path, int number_class, int *image_number, float *usecPerImage, unsigned int enable_detail);
 	void free_results(unsigned int * result);
@@ -57,16 +58,16 @@ extern "C" {
 	
 	//std::vector<uint8_t> doImageStuff_test(std::vector<uint8_t> &frames);
 	//void doImageStuff_test(hls::Mat<IMG_ROWS, IMG_COLS, HLS_8UC1> &frames, hls::Mat<IMG_ROWS, IMG_COLS, HLS_8UC1> &output);
-	void doImageStuff_test(std::vector<uint8_t> &frames, std::vector<uint8_t> &output, unsigned int count);
-	void doImageStuff_test_arr(uint8_t* &frames, uint8_t* &output, unsigned int count); // Avoids allocating host buffers every single time...
+	void doImageStuff_test(std::vector<uint8_t> &cur, std::vector<uint8_t> &prev, std::vector<uint8_t> &output, unsigned int count);
+	void doImageStuff_test_arr(uint8_t * cur, uint8_t * prev, uint8_t * output, unsigned int count); // Avoids allocating host buffers every single time...
 	
 	unsigned int inference_arr(uint8_t * img_in, unsigned int results[64], int number_class, float *usecPerImage);
 }
 
 // How many previous classifications should be remembered
-#define HST_LEN 32
-float lambda = 0.2; // Decay constant
-std::vector<float> history_weights(HST_LEN);
+//#define HST_LEN 32
+//float lambda = 0.2; // Decay constant
+std::vector<float> history_weights;
 std::vector<std::vector<unsigned int> > result_history;
 
 struct scene_object
@@ -196,10 +197,10 @@ void runBNN_multipleImages(std::vector<cv::Mat> &imgs, std::vector<std::string> 
 		//std::cout << "r = "; print_vector(r); std::cout << std::endl;
 		tmp = getMaxIndex(r);
 		//std::cout << "max index = " << tmp << std::endl;
-		//std::cout << "certainty = " << calculate_certainty(r) << std::endl;
+		//std::cout << "certainty = " << calculate_certainty(r, vp.certainty_spread) << std::endl;
 		// Pass the results to output vector
 		outputs[i] 	   = tmp;
-		certainties[i] = calculate_certainty(r);
+		certainties[i] = calculate_certainty(r, vp.certainty_spread);
 	}
 	
 	//std::cout << "outputs = "; print_vector(outputs);
@@ -237,7 +238,7 @@ void runBNN_image(const char* path, std::vector<std::string> &classes, unsigned 
 	//std::cout << "truncated_results = "; print_vector(truncated_results); std::cout << std::endl;
 	//std::cout << "detailed_results = "; print_vector(detailed_results); std::cout << std::endl;
 
-	certainty = calculate_certainty(detailed_results);
+	certainty = calculate_certainty(detailed_results, vp.certainty_spread);
 	
 	//std::cout << "------------------" << std::endl;
 	//std::cout << "Certainty = " << certainty << std::endl;
@@ -277,6 +278,16 @@ int main(int argc, char** argv)
 	args::ValueFlag<int> motion_tracking_arg(parser, "bool", "Enable/disable motion tracking. Track objects across multiple frames. Must be enabled for the classification window", {"motion_tracking"});
 	args::ValueFlag<int> classification_window_arg(parser, "bool", "Enable/disable classification window. This uses the past 32 classifications and weights them accordingly", {"classification_window"});
 	
+	args::ValueFlag<float> lambda_arg(parser, "float", "Decay constant", {"lambda"});
+	args::ValueFlag<int> window_length_arg(parser, "int", "Window length", {"window_length"});
+	
+	/*
+	 * The certainty of a classification is calculated as 1 / sum(results^n)
+	 * where n determines the spread of the certainties (sensitivity to small changes in results)
+	 * the larger it is, the smaller non-zero results will get and so the sum reduces => increased classification output
+	 */
+	args::ValueFlag<int> certainty_spread_arg(parser, "int", "Certainty spread (sensitivity)", {"certainty_spread"});
+	
     try
     {
         parser.ParseCLI(argc, argv);
@@ -293,8 +304,13 @@ int main(int argc, char** argv)
         return 1;
     }
 	
+	vp.window_length = (window_length_arg ? static_cast<int>(args::get(window_length_arg)) : 32);
+	history_weights.resize(vp.window_length);
+	
+	float lambda = (lambda_arg ? static_cast<float>(args::get(lambda_arg)) : 0.2);
+	std::cout << "Lambda: " << lambda << std::endl;
 	// Pre-populate history weights with exponential decays
-	for(int i = 0; i < HST_LEN; i++)
+	for(int i = 0; i < vp.window_length; i++)
 	{
 		history_weights[i] = exp_decay(lambda, i);
 	}
@@ -318,6 +334,7 @@ int main(int argc, char** argv)
 		vp.adaptive_thresholding = (adaptive_thresholding_arg ? static_cast<bool>(args::get(adaptive_thresholding_arg)) : true);
 		vp.motion_tracking = (motion_tracking_arg ? static_cast<bool>(args::get(motion_tracking_arg)) : true);
 		vp.classification_window = (classification_window_arg ? static_cast<bool>(args::get(classification_window_arg)) : true);
+		vp.certainty_spread = (certainty_spread_arg ? static_cast<int>(args::get(certainty_spread_arg)) : 10);
 		
 		std::cout << "Dilation val: " << vp.dilation_val << std::endl;
 		std::cout << "Threshold val: " << vp.threshold_val << std::endl;
@@ -325,7 +342,8 @@ int main(int argc, char** argv)
 		std::cout << "Threshold area: " << vp.threshold_area << std::endl;
 
 		std::cout << "Adaptive thresholding set to " << vp.adaptive_thresholding << std::endl;
-
+		std::cout << "Certainty spread: " << vp.certainty_spread << std::endl;
+		
 		// Used in camera|video
 		roi_mode mode = BACKGROUND_SUBTRACTION;
 		if(roi_method_arg)
@@ -466,10 +484,14 @@ int main(int argc, char** argv)
 
 			std::cout << "Initialising BNN with cifar10 weights" << std::endl;
 			deinit();
-			load_parameters(BNN_PARAM_DIR.c_str());			
+			load_parameters(BNN_PARAM_DIR.c_str());	
+
+			//init_test();
 
 			// Test the bnn on the test batches
 			testBNN(src_s.c_str(), output, certainty, num_images_i, pso_i);
+			
+			//return 0; // NOT DOING DILATION STUFF
 			
 			
 // ----------------------------------------------------------------------------------------------------
@@ -477,18 +499,29 @@ int main(int argc, char** argv)
 			std::cout << "Doing image stuff..." << std::endl;
 			
 			// Load an image and threshold it
-			std::string image_path = "/home/xilinx/open_cv2/images/BlackWhiteTest2.jpg";
+			//std::string image_path_cur = "/home/xilinx/open_cv2/images/BlackWhiteTest2.jpg";
+			std::string image_path_cur = "/home/xilinx/open_cv2/images/cur.png";
+			std::string image_path_prev = "/home/xilinx/open_cv2/images/prev.png";
 			//std::string image_path = (src_arg ? args::get(src_arg) : "/home/xilinx/open_cv2/images/BlackWhiteTest2.jpg");
-			cv::Mat image = cv::imread(image_path, CV_LOAD_IMAGE_GRAYSCALE);
+			cv::Mat image_cur = cv::imread(image_path_cur, CV_LOAD_IMAGE_GRAYSCALE);
+			cv::Mat image_prev = cv::imread(image_path_prev, CV_LOAD_IMAGE_GRAYSCALE);
+			cvWaitKey(0);
 			
 			cv::Size frameSize(WINDOW_WIDTH, WINDOW_HEIGHT);
-			resize(image, image, frameSize);
-			cv::Mat img_bw = image > 128; // Convert to black and white
+			resize(image_cur, image_cur, frameSize);
+			resize(image_prev, image_prev, frameSize);
 			
-			cv::imshow("B/W Input: ", img_bw);
+			cv::imshow("Raw Input cur: ", image_cur);
+			cv::imshow("Raw Input prev: ", image_prev);
+			//cv::Mat img_bw = image > 128; // Convert to black and white
+			cvWaitKey(0);
+			
+			//cv::imshow("B/W Input: ", img_bw);
+			//std::cout << "Starting..." << std::endl;
+			std::cout << "Size = " << image_cur.cols << "x" << image_cur.rows << std::endl;
 			
 			// Extract a 90x60 region from the image (for cur and prev)
-			cv::Rect roi(0, 0, BLOCK_WIDTH, BLOCK_HEIGHT); // x,y,w,h
+			/*cv::Rect roi(0, 0, BLOCK_WIDTH, BLOCK_HEIGHT); // x,y,w,h
 			
 			// Create N blocks (ROIs) to be dilated, each of size 90x60
 			std::vector<cv::Mat> ROIs;
@@ -519,7 +552,7 @@ int main(int argc, char** argv)
 			std::cout << "Window dimensions = " << WINDOW_WIDTH << "x" << WINDOW_HEIGHT << std::endl;
 			std::cout << "# Regions = " << ROIs.size() << std::endl;
 			
-			/*
+			
 			// NOT PIPELINED HARDWARE
 			auto t1 = std::chrono::high_resolution_clock::now();
 			for(int i = 0; i < ROIs.size(); i++)
@@ -538,7 +571,7 @@ int main(int argc, char** argv)
 				//}
 				
 				std::vector<uint8_t> acc_output(BLOCK_HEIGHT * BLOCK_WIDTH);
-				doImageStuff_test(acc_input, acc_output, 1);
+				doImageStuff_test(acc_input, acc_output, 1); // 1 because 1 image at a time
 				
 				//hls::Mat<BLOCK_HEIGHT, BLOCK_WIDTH, HLS_8UC1> acc_output_mat;
 				//doImageStuff_test(acc_input_mat, acc_output_mat);
@@ -557,9 +590,9 @@ int main(int argc, char** argv)
 				//}
 				auto t2a = std::chrono::high_resolution_clock::now();
 				
-				cv::imshow("in", ROIs[i]);
-				cv::imshow("out", image_out);
-				cv::waitKey(0);	
+				//cv::imshow("in", ROIs[i]);
+				//cv::imshow("out", image_out);
+				//cv::waitKey(0);	
 				
 				auto duration1a = std::chrono::duration_cast<std::chrono::microseconds>(t2a - t1a).count();
 				std::cout << "[Not-pipelined] ----- Dilation [hardware] on SINGLE images took " << duration1a << "us" << std::endl;
@@ -568,7 +601,7 @@ int main(int argc, char** argv)
 			
 			auto duration1 = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
 			std::cout << "[Not-pipelined] Dilation [hardware] on ALL images took " << duration1 << "us" << std::endl;
-			*/
+			
 			
 			// SOFTWARE NOT PIPELINED
 			auto t3 = std::chrono::high_resolution_clock::now();
@@ -601,15 +634,22 @@ int main(int argc, char** argv)
 			auto t4 = std::chrono::high_resolution_clock::now();
 			
 			auto duration2 = std::chrono::duration_cast<std::chrono::microseconds>(t4 - t3).count();
-			std::cout << "[Not-pipelined] Dilation [software] on ALL images took " << duration2 << "us" << std::endl;	
+			std::cout << "[Not-pipelined] Dilation [software] on ALL images took " << duration2 << "us" << std::endl;*/
 			
 			// SOFTWARE PIPELINED
 			auto t5 = std::chrono::high_resolution_clock::now();
 			{
-				cv::Mat dilateFrameFull;
-				dilate(img_bw, dilateFrameFull, cv::Mat(), cv::Point(-1, -1), vp.dilation_val);
+				cv::Mat blur_cur, blur_prev;
+				cv::blur(image_cur, blur_cur, cv::Size(10,10));
+				cv::blur(image_prev, blur_prev, cv::Size(10,10));
 				
-				cv::imshow("B/W Output[software]: ", dilateFrameFull);
+				cv::Mat threshFrame, dilateFrame, erodeFrame;
+				cv::Mat diffFrame = abs(blur_cur - blur_prev);
+				threshold(diffFrame, threshFrame, 128, 255, cv::THRESH_BINARY);
+				dilate(threshFrame, dilateFrame, cv::Mat());
+				erode(dilateFrame, erodeFrame, cv::Mat());
+				
+				cv::imshow("B/W Output[software]: ", threshFrame);
 			}
 			auto t6 = std::chrono::high_resolution_clock::now();
 			
@@ -617,7 +657,7 @@ int main(int argc, char** argv)
 			std::cout << "[Pipelined] Dilation [software] on ALL images took " << duration3 << "us" << std::endl;
 			
 			// CONVERSION TEST WORKS
-			
+			/*
 				//uint8_t* acc_input_full  = new uint8_t[(WINDOW_HEIGHT * WINDOW_WIDTH)];
 				//uint8_t* acc_output_full = new uint8_t[(WINDOW_HEIGHT * WINDOW_WIDTH)];
 				std::vector<uint8_t> acc_vec_full(WINDOW_HEIGHT * WINDOW_WIDTH);
@@ -640,39 +680,45 @@ int main(int argc, char** argv)
 				
 				cv::waitKey(0);
 			
-			// END CONVERSION TEST
+			// END CONVERSION TEST*/
 
 			// HARDWARE PIPELINED
 			auto t7 = std::chrono::high_resolution_clock::now();
 			{
-				//mat2vector(img_bw, acc_input_full); // Convert the 90x60 Mat to vector	
-				
-				//uint8_t* acc_input_full  = new uint8_t[(WINDOW_HEIGHT * WINDOW_WIDTH)];
-				//uint8_t* acc_output_full = new uint8_t[(WINDOW_HEIGHT * WINDOW_WIDTH)];
-				std::vector<uint8_t> acc_input_full(WINDOW_HEIGHT * WINDOW_WIDTH);
+				std::vector<uint8_t> acc_input_cur_full(WINDOW_HEIGHT * WINDOW_WIDTH);
+				std::vector<uint8_t> acc_input_prev_full(WINDOW_HEIGHT * WINDOW_WIDTH);
 				std::vector<uint8_t> acc_output_full(WINDOW_HEIGHT * WINDOW_WIDTH);
-				//mat2arr(img_bw, acc_input_full); // Convert the 90x60 Mat to vector
-				mat2blockvec<BLOCK_WIDTH, BLOCK_HEIGHT>(img_bw, acc_input_full);
+				mat2vector(image_cur, acc_input_cur_full);
+				mat2vector(image_prev, acc_input_prev_full);
+				
+				/*uint8_t acc_input_cur[WINDOW_HEIGHT * WINDOW_WIDTH];
+				uint8_t acc_input_prev[WINDOW_HEIGHT * WINDOW_WIDTH];
+				uint8_t acc_output[WINDOW_HEIGHT * WINDOW_WIDTH];
+				memcpy(acc_input_cur,image_cur.data,sizeof(uint8_t)*WINDOW_HEIGHT*WINDOW_WIDTH);
+				memcpy(acc_input_prev,image_prev.data,sizeof(uint8_t)*WINDOW_HEIGHT*WINDOW_WIDTH);*/
+				
+				//mat2blockvec<BLOCK_WIDTH, BLOCK_HEIGHT>(img_bw, acc_input_full);
 				std::cout << "Converted" << std::endl;
 				
 				auto t7a = std::chrono::high_resolution_clock::now();
-				//std::vector<uint8_t> acc_output_full(WINDOW_HEIGHT * WINDOW_WIDTH);
-				doImageStuff_test(acc_input_full, acc_output_full, ROIs.size());
+				//doImageStuff_test(acc_input_full, acc_output_full, ROIs.size());
+				//doImageStuff_test_arr(acc_input_cur, acc_input_prev, acc_output, 1);
+				doImageStuff_test(acc_input_cur_full, acc_input_prev_full, acc_output_full, 1);
 				auto t8a = std::chrono::high_resolution_clock::now();
 				
-				cv::Mat image_out(WINDOW_HEIGHT, WINDOW_WIDTH, CV_8UC1);
-				//arr2mat<WINDOW_HEIGHT, WINDOW_WIDTH>(acc_output_full, image_out);
-				blockvec2mat<WINDOW_HEIGHT, WINDOW_WIDTH, BLOCK_WIDTH, BLOCK_HEIGHT>(acc_output_full, image_out);
+				//cv::Mat image_out(WINDOW_HEIGHT, WINDOW_WIDTH, CV_8UC1, acc_output);
+				
+				//cv::Mat image_out(WINDOW_HEIGHT, WINDOW_WIDTH, CV_8UC1);
+				//blockvec2mat<WINDOW_HEIGHT, WINDOW_WIDTH, BLOCK_WIDTH, BLOCK_HEIGHT>(acc_output_full, image_out);
 				
 				// Convert output vector back into a matrix
-				//cv::Mat image_out(WINDOW_HEIGHT, WINDOW_WIDTH, CV_8UC1);
-				//vector2mat<WINDOW_HEIGHT, WINDOW_WIDTH>(acc_output_full, image_out);
+				cv::Mat image_out(WINDOW_HEIGHT, WINDOW_WIDTH, CV_8UC1);
+				vector2mat<WINDOW_HEIGHT, WINDOW_WIDTH>(acc_output_full, image_out);
 				
 				auto duration4a = std::chrono::duration_cast<std::chrono::microseconds>(t8a - t7a).count();
 				std::cout << "[Pipelined] [LOWER-BOUND] Dilation [hardware] on ALL images took " << duration4a << "us" << std::endl;					
 				
 				cv::imshow("B/W Output[hardware]: ", image_out);
-				
 				//delete[] acc_input_full;
 				//delete[] acc_output_full;
 			}
@@ -693,25 +739,30 @@ int main(int argc, char** argv)
 		} 
 		else if(mode_s == "open_batch") // Open a binary batch file and show the images inside it
 		{
-			std::string filename;
-			filename = USER_DIR + "batch.bin";;
-			std::vector<cv::Mat> batch1;
-			cv::Mat label1 = cv::Mat::zeros(1, 10000, CV_64FC1);   
-			read_batch(filename, batch1, label1);
+			std::string filename = (src_arg ? args::get(src_arg) :  USER_DIR + "batch.bin");
+			std::vector<cv::Mat> batch;
+			cv::Mat labels = cv::Mat::zeros(1, 10000, CV_64FC1);   
+			read_batch(filename, batch, labels);
 			
-			std::cout << "Number of images = " << batch1.size() << std::endl;
-			std::cout << "Label1 = " << label1.at<int>(0, 0) << std::endl;
+			std::cout << "Number of images = " << batch.size() << std::endl;
+			//std::cout << "Label1 = " << label1.at<int>(0, 0) << std::endl;
 			
-			for(auto &img : batch1)
-				imshow("title", img);	
-
-			cv::waitKey(0);			
+			for(int i = 0; i < batch.size(); i++){
+				std::cout << "Label" << i << "=" << labels.at<double>(0, i) << std::endl;
+				imshow("Image" + std::to_string(i), batch[i]);	
+				
+				/*
+				 * Do whatever you want with the test image
+				 */
+				
+				cv::waitKey(0);	
+			}		
 		}
 		else if(mode_s == "cifar10") // Test that the cifar10 conversion works
 		{
 			int batch_num = (batch_num_arg ? static_cast<int>(args::get(batch_num_arg)) : 0); // Index of image to check from the batch file			 
 			 
-			std::string filename = "/home/xilinx/host/bnn_lib_tests/test/data_batch_1.bin";
+			std::string filename = (src_arg ? args::get(src_arg) :  "/home/xilinx/host/bnn_lib_tests/test/data_batch_1.bin");
 			std::vector<cv::Mat> batch;
 			cv::Mat label1 = cv::Mat::zeros(1, 10000, CV_64FC1);   
 			read_batch(filename, batch, label1);
@@ -822,6 +873,9 @@ int main(int argc, char** argv)
 			
 			cv::Mat image = cv::imread(src_s);
 			cv::imshow("Original Image", image);
+			
+			std::ofstream ofile;
+			ofile.open("certainty_results.txt", std::ios::app);
 
 			std::vector<std::string> classes = loadClasses();
 			
@@ -850,6 +904,8 @@ int main(int argc, char** argv)
 					original_classification = output;
 		
 				std::cout << "Classified as a " << classes[output] << std::endl;
+				std::cout << "Certainty = " << certainty << std::endl;
+				ofile << certainty << std::endl;
 				std::cout << "------------------" << std::endl;
 				
 				if(output != original_classification)
@@ -896,6 +952,8 @@ int main(int argc, char** argv)
 			cv::imshow("Original Image", orig_image);
 
 			std::vector<std::string> classes = loadClasses();
+			std::ofstream ofile;
+			ofile.open("certainty_results.txt", std::ios::app);
 			
 			int original_classification;
 			// Increase the standard deviation of the applied additive noise
@@ -920,6 +978,8 @@ int main(int argc, char** argv)
 					original_classification = output;
 				
 				std::cout << "std = " << i << std::endl;
+				std::cout << "Certainty = " << certainty << std::endl;
+				ofile << certainty << std::endl;
 				std::cout << "Classified as a " << classes[output] << std::endl;
 				std::cout << "------------------" << std::endl;
 				
@@ -997,6 +1057,10 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 	{
 		// If no src is supplied, open the camera
 		cap.open(0); // Open the default camera
+		
+		std::cout << "Camera resolution = " << cap.get(CV_CAP_PROP_FRAME_WIDTH) << "x" << cap.get(CV_CAP_PROP_FRAME_HEIGHT) << std::endl;
+		cap.set(CV_CAP_PROP_FRAME_WIDTH,WINDOW_WIDTH);
+		cap.set(CV_CAP_PROP_FRAME_HEIGHT,WINDOW_HEIGHT);
 	}
 	else
 	{
@@ -1006,16 +1070,20 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 	if(!cap.isOpened()) // Check if we succeeded
 	{  
 		std::cout << "ERROR! Unable to open the camera/video" << std::endl;
+		std::cout << "src = " << src << std::endl;
 		return -1;
 	}
 	
 	cv::VideoWriter outputVideo;
 	if(save_output)
 	{
-		int ex = static_cast<int>(cap.get(CV_CAP_PROP_FOURCC)); // Get Codec Type- Int form
-		cv::Size S = cv::Size((int) cap.get(CV_CAP_PROP_FRAME_WIDTH),
-							  (int) cap.get(CV_CAP_PROP_FRAME_HEIGHT));
-		outputVideo.open("output.avi", ex, cap.get(CV_CAP_PROP_FPS), S, true);
+		std::cout << "Opening video output" << std::endl;
+		//int ex = static_cast<int>(cap.get(CV_CAP_PROP_FOURCC)); // Get Codec Type- Int form
+		//cv::Size S = cv::Size((int) cap.get(CV_CAP_PROP_FRAME_WIDTH),
+		//					  (int) cap.get(CV_CAP_PROP_FRAME_HEIGHT));
+		//cv::Size S = cv::Size(WINDOW_WIDTH, WINDOW_HEIGHT);
+		outputVideo.open("outcpp.avi",CV_FOURCC('M','J','P','G'),10, cv::Size(WINDOW_WIDTH,WINDOW_HEIGHT));
+		//outputVideo.open("output.avi", ex, cap.get(CV_CAP_PROP_FPS), S, true);
 		
 		if(!outputVideo.isOpened())
 		{
@@ -1035,11 +1103,30 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 	
 	std::vector<cv::Rect> prev_img_rois;
 	
+	std::ofstream ofile;
+	int num_success = 0;
+	int num_fail    = 0;
+	if(mode == roi_mode::SINGLE_CENTER_BOX)
+	{
+		ofile.open("accuracy_results.txt", std::ios::app);
+	}
+	
 	while(true)
 	{
 		current_ticks = clock();
 		
 		cap >> curFrame;
+		
+		// Uncomment the following section to just to show video at max frame rate
+		/*cv::imshow("Final video", curFrame);
+		
+		delta_ticks = clock() - current_ticks; // Time in ms to read the frame, process it, and render it on the screen
+		if (delta_ticks > 0)
+			fps = CLOCKS_PER_SEC / delta_ticks;			
+		
+		int keyID2 = cvWaitKey(30);
+		std::cout << "fps = " << fps << std::endl;
+		continue;*/
 		
 		// If finished reading video file (not applicable when using camera)
 		if (!curFrame.data)
@@ -1058,6 +1145,7 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 				 */
 				 
 				//cv::imshow("1. Original frame", curFrame);
+				auto t11 = std::chrono::high_resolution_clock::now();
 				
 				// Grayscale the image
 				cv::cvtColor(curFrame, grayFrame, CV_BGR2GRAY);
@@ -1086,6 +1174,10 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 				// Copy the current frame onto the previous frame
 				blurFrame.copyTo(prevFrame); 
 				
+				auto t12 = std::chrono::high_resolution_clock::now();
+				
+				auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t12 - t11).count();
+				std::cout << "Background subtraction took " << duration << " microseconds" << std::endl;	
 				//curFrame = diffFrame; // Temp
 			break; }
 		
@@ -1102,7 +1194,7 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 				/*
 				 * Simplify the colour scheme of the frame and then perform k-means clustering to identify regions
 				 */
-				 
+				std::cout << "Simplifying image..." << std::endl;
 				cv::Mat simpleFrame = imageSimplification(curFrame);
 				
 				cv::cvtColor(simpleFrame, grayFrame, CV_BGR2GRAY);
@@ -1225,13 +1317,13 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 						// Add the classification result to the objects history
 						scene_objects[j].result_history.insert(scene_objects[j].result_history.begin(), detailed_results[n]);
 						
-						if(scene_objects[j].result_history.size() > HST_LEN)
+						if(scene_objects[j].result_history.size() > vp.window_length)
 							scene_objects[j].result_history.pop_back(); // Remove any element older than HST_LEN frames
 						
 						// Similarly for prev_points
 						scene_objects[j].prev_points.insert(scene_objects[j].prev_points.begin(), cv::Point(img_rois[n].x + img_rois[n].width/2, img_rois[n].y + img_rois[n].height/2));
 						
-						if(scene_objects[j].prev_points.size() > HST_LEN)
+						if(scene_objects[j].prev_points.size() > vp.window_length)
 							scene_objects[j].prev_points.pop_back(); // Remove any element older than HST_LEN frames
 					}
 				}
@@ -1287,7 +1379,7 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 					// Will need to insert an empty set of classification results to shift them all back in time
 					scene_objects[i].result_history.insert(scene_objects[i].result_history.begin(), empty_results);
 					
-					if(scene_objects[i].result_history.size() > HST_LEN)
+					if(scene_objects[i].result_history.size() > vp.window_length)
 						scene_objects[i].result_history.pop_back(); // Remove any element older than HST_LEN frames
 				}
 			}
@@ -1297,7 +1389,26 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 			std::cout << "Motion tracking and classification windowing took " << duration << " microseconds" << std::endl;
 		}
 		
-		//
+		//Before drawing stuff
+		delta_ticks = clock() - current_ticks; // Time in ms to read the frame, process it, and render it on the screen
+		if (delta_ticks > 0)
+			fps = CLOCKS_PER_SEC / delta_ticks;		
+		
+		// 
+		/*if(mode == roi_mode::SINGLE_CENTER_BOX)
+		{
+			if(classes[outputs[0]] == "Bird")
+			{
+				num_success++;
+			}else{
+				num_fail++;
+			}
+			
+			// Write the current cumulative accuracy to file
+			double accuracy_perc = (double)(num_success)/(double)(num_success + num_fail);
+			
+			ofile << accuracy_perc << std::endl;
+		}*/
 		
 		// Store previous classifications
 		// THE FOLLOWING WORKS WELL WITH CAMERA!! DONT REMOVE
@@ -1340,8 +1451,12 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
  		for(int i = 0; i < img_rois.size(); i++)
 		{
 			// If classification doesn't meet threshold, ignore it.
-			if(certainties[i] < vp.threshold_certainty)
+			if(certainties[i] < vp.threshold_certainty) {
+				if(mode == roi_mode::STRIDE){
+					rectangle(curFrame, img_rois[i], COLOURS_slategray, 1);
+				}
 				continue;
+			}
 
 			// Ignore some classifications
 			//if(classes[outputs[i]] == "Ship" || classes[outputs[i]] == "Deer")
@@ -1368,21 +1483,21 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 		{
 			int radius = 5;
 			for (int j = 1; j < scene_objects[i].prev_points.size(); j++)
-				line(curFrame, scene_objects[i].prev_points[j], scene_objects[i].prev_points[j-1], colourList[i % colourList.size()], -1, 8, 0);
+				line(curFrame, scene_objects[i].prev_points[j], scene_objects[i].prev_points[j-1], colourList[i % colourList.size()], LINE_THICKNESS);
 				//circle(curFrame, cvPoint(scene_objects[i].prev_points[j].x, scene_objects[i].prev_points[j].y), radius, colourList[i % colourList.size()], -1, 8, 0);
 		}
-		
+
 		// fps box at top right of screen
-		/*std::stringstream fps_ss;
+		std::stringstream fps_ss;
 		fps_ss << "FPS: ";
 		fps_ss << fps;
-		putText(curFrame, fps_ss.str(), cv::Point(20, 40), cv::FONT_HERSHEY_PLAIN, 5, cv::Scalar(255,255,0));
-		std::cout << "FPS = " << fps << std::endl;*/
+		putText(curFrame, fps_ss.str(), cv::Point(20, 50), cv::FONT_HERSHEY_PLAIN, 5, cv::Scalar(255,255,0), 2);
+		std::cout << "FPS = " << fps << std::endl;
 		
-		std::stringstream num_objs_ss;
+		/*std::stringstream num_objs_ss;
 		num_objs_ss << "#Objects: ";
 		num_objs_ss << scene_objects.size();
-		putText(curFrame, num_objs_ss.str(), cv::Point(20, 50), cv::FONT_HERSHEY_PLAIN, 4, cv::Scalar(255,255,0), 2);
+		putText(curFrame, num_objs_ss.str(), cv::Point(20, 50), cv::FONT_HERSHEY_PLAIN, 4, cv::Scalar(255,255,0), 2);*/
 
 		/*std::stringstream frame_num_ss;
 		frame_num_ss << "Frame Number: ";
@@ -1406,9 +1521,9 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 		
 		frame_num++;
 		
-		delta_ticks = clock() - current_ticks; // Time in ms to read the frame, process it, and render it on the screen
-		if (delta_ticks > 0)
-			fps = CLOCKS_PER_SEC / delta_ticks;		
+		//delta_ticks = clock() - current_ticks; // Time in ms to read the frame, process it, and render it on the screen
+		//if (delta_ticks > 0)
+		//	fps = CLOCKS_PER_SEC / delta_ticks;		
 		
 		int keyID = cvWaitKey(30); // need to change this 30
 		//if (keyID != -1)
@@ -1417,9 +1532,15 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 		
 		//system("pause"); // Hold the frame until user presses a key in the terminal. *Not recognised on linux
 	}
-	
+
+	if(mode == roi_mode::SINGLE_CENTER_BOX)
+	{
+		ofile.close();
+	}
+		
 	// Finished, release the capture
 	cap.release();
+	outputVideo.release();
 	cv::destroyAllWindows();
 	
 	return 0;

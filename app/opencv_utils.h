@@ -58,18 +58,21 @@ struct video_parameters
 	
 	bool bundle_regions;
 	bool adaptive_thresholding;
+	
+	int window_length;
+	int certainty_spread;
 };
 
 extern video_parameters vp; // Hold all the video/image parameters
 
-#define WINDOW_WIDTH  720 // 180 * 4
-#define WINDOW_HEIGHT 480 // 120 * 4
+#define WINDOW_WIDTH  640//176 //720 //720 // 180 * 4 176
+#define WINDOW_HEIGHT 480//144 //480 //480 // 120 * 4 144
 //#define WINDOW_WIDTH  180 // 180 * 4
 //#define WINDOW_HEIGHT 120 // 120 * 4
 //#define BLOCK_WIDTH   90 //180 // COLS
 //#define BLOCK_HEIGHT  60 //120 // ROWS
-#define BLOCK_WIDTH 30
-#define BLOCK_HEIGHT 20
+#define BLOCK_WIDTH 90
+#define BLOCK_HEIGHT 60
 
 // Convert output/classification to a colour
 // Each class should have a different colour, it makes it easier to distinguish when watching the video
