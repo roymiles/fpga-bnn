@@ -90,9 +90,9 @@ const unsigned int bitsPerUint8_t = sizeof(uint8_t) * 8;
 	//#define OUTIMG_BUF_ENTRIES 345600
 	// 174x144 = 25344
 	// 640x480 = 307200
-	#define CUR_BUF_ENTRIES 307200
-	#define PREV_BUF_ENTRIES 307200
-	#define OUTIMG_BUF_ENTRIES 307200
+	#define CUR_BUF_ENTRIES 15000
+	#define PREV_BUF_ENTRIES 15000
+	#define OUTIMG_BUF_ENTRIES 15000
 //#endif
 
 void binarizeAndPack(const tiny_cnn::vec_t& in, ExtMemWord* out, unsigned int inBufSize = INPUT_BUF_ENTRIES);
@@ -358,7 +358,7 @@ std::vector<unsigned int> testPrebuiltCIFAR10_from_image(std::vector<tiny_cnn::v
     usecPerImage = (float)duration / (count);
 
     cout << "Inference took " << duration << " microseconds, " << usecPerImage << " usec per image" << endl;
-    cout << "Classification rate: " << 1000000.0 / usecPerImage << " images per second" << endl;
+    //cout << "Classification rate: " << 1000000.0 / usecPerImage << " images per second" << endl;
 
     delete[] packedImages;
     delete[] packedOut;
@@ -368,6 +368,7 @@ std::vector<unsigned int> testPrebuiltCIFAR10_from_image(std::vector<tiny_cnn::v
 template <unsigned int inWidth, unsigned int outWidth>
 std::vector<unsigned int> testPrebuiltCIFAR10_multiple_images(std::vector<tiny_cnn::vec_t>& imgs, const unsigned int numCategories, std::vector<unsigned int>& detailed_results, float& usecPerImage, unsigned int pso2 = 16)
 {
+	auto t1a = chrono::high_resolution_clock::now();
     const unsigned int count = imgs.size();
     std::vector<unsigned int> results;
 
@@ -425,7 +426,12 @@ std::vector<unsigned int> testPrebuiltCIFAR10_multiple_images(std::vector<tiny_c
     auto duration = chrono::duration_cast<chrono::microseconds>(t2 - t1).count();
     usecPerImage = (float)duration / (count);
 	
-//    cout << "Inference took " << duration << " microseconds, " << usecPerImage << " usec per image" << endl;
+	auto t2a = chrono::high_resolution_clock::now();
+	
+    auto durationa = chrono::duration_cast<chrono::microseconds>(t2a - t1a).count();
+	
+	cout << "Inference took " << duration << " microseconds, " << usecPerImage << " usec per image" << endl;
+	cout << "Offloading and classifying took " << durationa << std::endl;
 //    cout << "Classification rate: " << 1000000.0 / usecPerImage << " images per second" << endl;
 
     delete[] packedImages;
@@ -437,7 +443,7 @@ std::vector<unsigned int> testPrebuiltCIFAR10_multiple_images(std::vector<tiny_c
 template<unsigned int NROWS, unsigned int NCOLS> // HEIGHT, WIDTH
 void doImageStuff_acc(std::vector<uint8_t> &cur, std::vector<uint8_t> &prev, std::vector<uint8_t> &output, unsigned int count)
 {	
-	std::cout << "Packing inputs..." << std::endl;
+	//std::cout << "Packing inputs..." << std::endl;
     // # of uint8_t per image
     //const unsigned int psi = cur.size(); //paddedSize(input_image.size() * inWidth, bitsPerExtMemWord) / bitsPerExtMemWord;
 	//const unsigned int psi = paddedSize(_count * 8, bitsPerUint8_t) / bitsPerUint8_t;
@@ -466,7 +472,7 @@ void doImageStuff_acc(std::vector<uint8_t> &cur, std::vector<uint8_t> &prev, std
         throw "Not enough space in accelBufOutImg";
 	}
 	
-	std::cout << "psi = " << psi << ", pso = " << pso << ", count = " << count << std::endl;
+	//std::cout << "psi = " << psi << ", pso = " << pso << ", count = " << count << std::endl;
 	
     // Allocate host-side buffers for packed input and outputs
 	uint8_t* packedImageCur = new uint8_t[(count * psi)];
@@ -485,18 +491,17 @@ void doImageStuff_acc(std::vector<uint8_t> &cur, std::vector<uint8_t> &prev, std
 		packedImageCur[i] = cur[i];
     }	
 	
-	std::cout << "Finished packing inputs" << std::endl;
-	std::cout << "Copying host buffer to accel" << std::endl;
-	std::cout << "Size to copy = " << sizeof(uint8_t) * count * psi << std::endl;
+	//std::cout << "Finished packing inputs" << std::endl;
+	//std::cout << "Copying host buffer to accel" << std::endl;
+	//std::cout << "Size to copy = " << sizeof(uint8_t) * count * psi << std::endl;
 	
     // copy inputs to accelerator
     //thePlatform->copyBufferHostToAccel((void*)&cur, accelBufCur, IMG_ROWS * IMG_COLS * 8 * count * psi);
 	//thePlatform->copyBufferHostToAccel((void*)packedImage, accelBufCur, sizeof(ap_uint<1>) * count * psi);
 	thePlatform2->copyBufferHostToAccel((void*)packedImageCur, accelBufCur, sizeof(uint8_t) * count * psi);
-	std::cout << "copied cur" << std::endl;
 	thePlatform2->copyBufferHostToAccel((void*)packedImagePrev, accelBufPrev, sizeof(uint8_t) * count * psi);
     
-	std::cout << "Finished copying host buffer to accel" << std::endl;
+	//std::cout << "Finished copying host buffer to accel" << std::endl;
 	
 	// Enable doImage
 	//thePlatform->writeJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_DOIMAGE_DATA, 1); // 0x74
@@ -504,13 +509,13 @@ void doImageStuff_acc(std::vector<uint8_t> &cur, std::vector<uint8_t> &prev, std
     // Set number of blocks to dilate
     //thePlatform->writeJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_NUMREPS_DATA, count); // 0x54	
 	
-	std::cout << "ExecAccel..." << std::endl;
+	//std::cout << "ExecAccel..." << std::endl;
 	
     auto t1 = chrono::high_resolution_clock::now();
     ExecAccel2();
     auto t2 = chrono::high_resolution_clock::now();
 	
-	std::cout << "Finished ExecAccel" << std::endl;
+	//std::cout << "Finished ExecAccel" << std::endl;
 	
 	//thePlatform->writeJamRegAddr(XBLACKBOXJAM_CONTROL_ADDR_DOIMAGE_DATA, 0); // 0x74
 	
@@ -525,7 +530,7 @@ void doImageStuff_acc(std::vector<uint8_t> &cur, std::vector<uint8_t> &prev, std
     //    result[i] = (ExtMemWord)lpbuf[i];
     //}
 	
-	std::cout << "Unpacking results" << std::endl;
+	//std::cout << "Unpacking results" << std::endl;
 	
 	//std::vector<uint8_t> result(pso); // Allocate pso size
     uint8_t* lpbuf = (uint8_t*)packedOut;
@@ -549,7 +554,7 @@ void doImageStuff_acc(std::vector<uint8_t> &cur, std::vector<uint8_t> &prev, std
     auto duration = chrono::duration_cast<chrono::microseconds>(t2 - t1).count();
     float usecPerBlockImage = (float)duration / (count);
 	
-	std::cout << "Took " << usecPerBlockImage << "us to dilate the image " << std::endl;
+	std::cout << "Accelerated motion segmentation [after offloading] took " << usecPerBlockImage << "us to dilate the image " << std::endl;
 	
 	delete[] packedImageCur;
 	delete[] packedImagePrev;

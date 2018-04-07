@@ -66,6 +66,15 @@ void makeNetwork(network<mse, adagrad> & nn) {
       ;
 }
 
+extern "C" void init_test()
+{
+	std::cout << "FoldedMVInit..." << std::endl;
+	FoldedMVInit("cnv-pynq");
+	std::cout << "Finished FoldedMVInit" << std::endl;
+	
+	network<mse, adagrad> nn;
+	makeNetwork(nn);
+}
 
 
 extern "C" void load_parameters(const char* path)
@@ -127,11 +136,10 @@ extern "C" void load_parameters(const char* path)
 
 extern "C" unsigned int inference(const char* path, unsigned int results[64], int number_class, float *usecPerImage)
 {
-	FoldedMVInit("cnv-pynq");
-
-	network<mse, adagrad> nn;
-
-	makeNetwork(nn);
+	//FoldedMVInit("cnv-pynq");
+	//network<mse, adagrad> nn;
+	//makeNetwork(nn);
+	
 	std::vector<label_t> test_labels;
 	std::vector<vec_t> test_images;
 
@@ -161,21 +169,21 @@ extern "C" unsigned int inference(const char* path, unsigned int results[64], in
 
 //extern "C" std::vector<uint8_t> doImageStuff_test(std::vector<uint8_t> &frames)
 //extern "C" hls::Mat<ROWS, COLS, HLS_8UC1> doImageStuff_test(hls::Mat<ROWS, COLS, HLS_8UC1> &frames, hls::Mat<ROWS, COLS, HLS_8UC1> &output)
-extern "C" void doImageStuff_test(std::vector<uint8_t> &frames, std::vector<uint8_t> &output, unsigned int count)
+extern "C" void doImageStuff_test(std::vector<uint8_t> &cur, std::vector<uint8_t> &prev, std::vector<uint8_t> &output, unsigned int count)
 {
 	// Needs to be done to ensure buffers are allocated
-	std::cout << "FoldedMVInit..." << std::endl;
+	/*std::cout << "FoldedMVInit..." << std::endl;
 	FoldedMVInit("cnv-pynq");
-	std::cout << "Finished" << std::endl;	
+	std::cout << "Finished" << std::endl;*/
 	
-	std::cout << "Performing image acceleration using a block size of " << BLOCK_WIDTH << "x" << BLOCK_HEIGHT << std::endl;
-	doImageStuff_acc<BLOCK_HEIGHT, BLOCK_WIDTH>(frames, output, count);
+	//std::cout << "Performing image acceleration using a block size of " << BLOCK_WIDTH << "x" << BLOCK_HEIGHT << std::endl;
+	//doImageStuff_acc<BLOCK_HEIGHT, BLOCK_WIDTH>(cur, prev, output, count);
+	doImageStuff_acc<WINDOW_HEIGHT, WINDOW_WIDTH>(cur, prev, output, count);
 }
 
-extern "C" void doImageStuff_test_arr(uint8_t* &frames, uint8_t* &output, unsigned int count)
+extern "C" void doImageStuff_test_arr(uint8_t * cur, uint8_t * prev, uint8_t * output, unsigned int count)
 {
-	std::cout << "DO NOT USE THIS" << std::endl;
-	//doImageStuff_acc_arr<BLOCK_HEIGHT, BLOCK_WIDTH>(frames, output, count);
+	doImageStuff_acc_arr<BLOCK_HEIGHT, BLOCK_WIDTH>(cur, prev, output, count);
 }
 
 extern "C" unsigned int inference_test(const char* path, unsigned int results[64], int number_class, float *usecPerImage, unsigned int img_num, int pso2)
@@ -203,11 +211,9 @@ extern "C" unsigned int inference_test(const char* path, unsigned int results[64
 
 extern "C" unsigned int* inference_multiple(const char* path, int number_class, int *image_number, float *usecPerImage, unsigned int enable_detail = 0)
 {
-	FoldedMVInit("cnv-pynq");
-
-	network<mse, adagrad> nn;
-
-	makeNetwork(nn);
+	//FoldedMVInit("cnv-pynq");
+	//network<mse, adagrad> nn;
+	//makeNetwork(nn);
 
 	std::vector<label_t> test_labels;
 	std::vector<vec_t> test_images;

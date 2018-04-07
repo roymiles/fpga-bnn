@@ -637,8 +637,9 @@ int main(int argc, char** argv)
 			std::cout << "[Not-pipelined] Dilation [software] on ALL images took " << duration2 << "us" << std::endl;*/
 			
 			// SOFTWARE PIPELINED
-			auto t5 = std::chrono::high_resolution_clock::now();
 			{
+				auto t5 = std::chrono::high_resolution_clock::now();
+				
 				cv::Mat blur_cur, blur_prev;
 				cv::blur(image_cur, blur_cur, cv::Size(10,10));
 				cv::blur(image_prev, blur_prev, cv::Size(10,10));
@@ -647,14 +648,15 @@ int main(int argc, char** argv)
 				cv::Mat diffFrame = abs(blur_cur - blur_prev);
 				threshold(diffFrame, threshFrame, 128, 255, cv::THRESH_BINARY);
 				dilate(threshFrame, dilateFrame, cv::Mat());
-				erode(dilateFrame, erodeFrame, cv::Mat());
+				//erode(dilateFrame, erodeFrame, cv::Mat());
+				
+				auto t6 = std::chrono::high_resolution_clock::now();
+				
+				auto duration3 = std::chrono::duration_cast<std::chrono::microseconds>(t6 - t5).count();
+				std::cout << "[Pipelined] Motion segmentation [software] on ALL images took " << duration3 << "us" << std::endl;				
 				
 				cv::imshow("B/W Output[software]: ", threshFrame);
 			}
-			auto t6 = std::chrono::high_resolution_clock::now();
-			
-			auto duration3 = std::chrono::duration_cast<std::chrono::microseconds>(t6 - t5).count();
-			std::cout << "[Pipelined] Dilation [software] on ALL images took " << duration3 << "us" << std::endl;
 			
 			// CONVERSION TEST WORKS
 			/*
@@ -716,7 +718,7 @@ int main(int argc, char** argv)
 				vector2mat<WINDOW_HEIGHT, WINDOW_WIDTH>(acc_output_full, image_out);
 				
 				auto duration4a = std::chrono::duration_cast<std::chrono::microseconds>(t8a - t7a).count();
-				std::cout << "[Pipelined] [LOWER-BOUND] Dilation [hardware] on ALL images took " << duration4a << "us" << std::endl;					
+				std::cout << "[Pipelined] [LOWER-BOUND] Motion segmentation [hardware] on ALL images took " << duration4a << "us" << std::endl;					
 				
 				cv::imshow("B/W Output[hardware]: ", image_out);
 				//delete[] acc_input_full;
@@ -725,14 +727,14 @@ int main(int argc, char** argv)
 			auto t8 = std::chrono::high_resolution_clock::now();	
 
 			auto duration4 = std::chrono::duration_cast<std::chrono::microseconds>(t8 - t7).count();
-			std::cout << "[Pipelined] Dilation [hardware] on ALL images took " << duration4 << "us" << std::endl;				
+			std::cout << "[Pipelined] Motion segmentation [hardware] on ALL images took " << duration4 << "us" << std::endl;				
 			
 			// Test vector2mat and mat2vector works
 			//cv::Mat test(BLOCK_HEIGHT, BLOCK_WIDTH, CV_8UC1);
 			//vector2mat<BLOCK_HEIGHT, BLOCK_WIDTH>(dilation_input, test);
 			//imshow("Test", test);
 			
-			std::cout << "Finished dilation" << std::endl;
+			std::cout << "Finished motion segmentation" << std::endl;
 // ----------------------------------------------------------------------------------------------------
 		
 			cv::waitKey(0);	
@@ -1111,8 +1113,15 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 		ofile.open("accuracy_results.txt", std::ios::app);
 	}
 	
+	std::vector<cv::Rect> img_rois;
+	cv::Mat image_out(WINDOW_HEIGHT, WINDOW_WIDTH, CV_8UC1);
+	std::vector<uint8_t> acc_input_cur_full(WINDOW_HEIGHT * WINDOW_WIDTH);
+	std::vector<uint8_t> acc_input_prev_full(WINDOW_HEIGHT * WINDOW_WIDTH);
+	std::vector<uint8_t> acc_output_full(WINDOW_HEIGHT * WINDOW_WIDTH);
+	
 	while(true)
 	{
+		auto t_a = std::chrono::high_resolution_clock::now();
 		current_ticks = clock();
 		
 		cap >> curFrame;
@@ -1135,7 +1144,11 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
  		// Resize image
 		resize(curFrame, curFrame, frameSize); // Just overwrite the curFrame because no longer need the nonscaled version
 		
-		std::vector<cv::Rect> img_rois;
+		cv::Mat diffFrame;
+		auto t_b = std::chrono::high_resolution_clock::now();
+		
+		auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t_b - t_a).count();
+		std::cout << "Read in current frame and resize took " << duration << " microseconds" << std::endl;	
 		// Each mode needs to take a frame and calculate the regions of interest as a vector of rectangles
 		switch(mode)
 		{
@@ -1153,7 +1166,7 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 				//cv::imshow("2. Grayscale frame", grayFrame);
 				
 				// Apply gaussian blue
-				cv::blur(grayFrame, blurFrame, blurSize);
+				//cv::blur(grayFrame, blurFrame, blurSize);
 				
 				//cv::imshow("3. Blurred frame", blurFrame);
 
@@ -1161,23 +1174,51 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 				if (prevFrame.empty()) 
 				{
 					// Copy the current frame onto the previous frame
-					blurFrame.copyTo(prevFrame);
+					grayFrame.copyTo(prevFrame);
 					continue; // Move onto next frame
 				}			
 				
 				// Note: prevFrame is a grayscale version of curFrame ( => grayFrame )
-				cv::Mat diffFrame = backgroundSubtraction(blurFrame, prevFrame); // not using blurframe??
+				//cv::Mat diffFrame = backgroundSubtraction(blurFrame, prevFrame);
+						
+				// Call the accelerator
+				mat2vector(grayFrame, acc_input_cur_full);
+				mat2vector(prevFrame, acc_input_prev_full);
 
+				auto t7a = std::chrono::high_resolution_clock::now();
+				doImageStuff_test(acc_input_cur_full, acc_input_prev_full, acc_output_full, 1);
+				auto t8a = std::chrono::high_resolution_clock::now();
+				
+				// Convert output vector back into a matrix
+				vector2mat<WINDOW_HEIGHT, WINDOW_WIDTH>(acc_output_full, image_out);
+				
 				// Extract the rectangles from the thresholded image
-				img_rois = contourRegions(diffFrame);
+				//img_rois = contourRegions(diffFrame);
+				img_rois = contourRegions(image_out);
 				
 				// Copy the current frame onto the previous frame
-				blurFrame.copyTo(prevFrame); 
+				//blurFrame.copyTo(prevFrame); 
+				grayFrame.copyTo(prevFrame);
 				
 				auto t12 = std::chrono::high_resolution_clock::now();
 				
-				auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t12 - t11).count();
-				std::cout << "Background subtraction took " << duration << " microseconds" << std::endl;	
+				auto duration0 = std::chrono::duration_cast<std::chrono::microseconds>(t8a - t7a).count();
+				std::cout << "Accelerated segmentation took " << duration0 << " microseconds" << std::endl;	
+				
+				auto duration1 = std::chrono::duration_cast<std::chrono::microseconds>(t12 - t11).count();
+				std::cout << "Full motion segmentation took " << duration1 << " microseconds" << std::endl;	
+				
+				/*cv::Mat blur_cur, blur_prev;
+				cv::blur(grayFrame, blur_cur, cv::Size(10,10));
+				cv::blur(prevFrame, blur_prev, cv::Size(10,10));
+				
+				cv::Mat threshFrame, dilateFrame;
+				cv::Mat diffFrame = abs(blur_cur - blur_prev);
+				threshold(diffFrame, threshFrame, 128, 255, cv::THRESH_BINARY);
+				dilate(threshFrame, dilateFrame, cv::Mat(), cv::Point(-1, -1), 8);*/
+				
+				//cv::imshow("Test[software]", dilateFrame);
+				//cvWaitKey(0);
 				//curFrame = diffFrame; // Temp
 			break; }
 		
@@ -1273,29 +1314,33 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 				
 		}
 		
+		std::cout << "Number of regions = " << img_rois.size() << std::endl;
 		if(roi_limit != -1)
 			img_rois = getSubset(img_rois, roi_limit); // Only get the first roi_limit regions of interest
 		
 		// Classify the regions of interest
  		std::vector<unsigned int> outputs(img_rois.size()); // outputs are the classification of each region (highest index)
 		std::vector<float> certainties(img_rois.size());
-
 		std::vector<std::vector<unsigned int> > detailed_results;
-		detailed_results.resize(img_rois.size());
-		for (int i = 0; i < img_rois.size(); i++)
-			detailed_results[i].resize(classes.size());
 		
-		auto t1 = std::chrono::high_resolution_clock::now();
-		classifyRegions(curFrame, img_rois, classes, outputs, certainties, vp.bundle_regions, detailed_results);
-		auto t2 = std::chrono::high_resolution_clock::now();
-		
-		auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
-		if(vp.bundle_regions)
+		if(img_rois.size() != 0)
 		{
-			std::cout << "Pipelined frame classification took " << duration << " microseconds" << std::endl;
-		}else{
-			std::cout << "Not pipelined frame classification took " << duration << " microseconds" << std::endl;
-		}		
+			detailed_results.resize(img_rois.size());
+			for (int i = 0; i < img_rois.size(); i++)
+				detailed_results[i].resize(classes.size());
+			
+			auto t1 = std::chrono::high_resolution_clock::now();
+			classifyRegions(curFrame, img_rois, classes, outputs, certainties, vp.bundle_regions, detailed_results);
+			auto t2 = std::chrono::high_resolution_clock::now();
+			
+			auto duration2 = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
+			if(vp.bundle_regions)
+			{
+				std::cout << "Complete frame classification [pipelined] took " << duration2 << " microseconds" << std::endl;
+			}else{
+				std::cout << "Not pipelined frame classification took " << duration2 << " microseconds" << std::endl;
+			}	
+		}
 		
 		if(vp.motion_tracking)
 		{
@@ -1338,15 +1383,15 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 					scene_objects.push_back(so);
 					obj_ind = scene_objects.size() - 1;
 					
-					std::cout << "Found a new object in the scene" << std::endl;
+					//std::cout << "Found a new object in the scene" << std::endl;
 				}
 				
 				// Update the output (classification) using weighted window
-				std::cout << "------------------------------" << std::endl;
+				/*std::cout << "------------------------------" << std::endl;
 				for(int i = 0; i < scene_objects[obj_ind].result_history.size(); i++)
 				{
 					std::cout << "result_history[" << i << "]  = "; print_vector(scene_objects[obj_ind].result_history[i]); std::cout << std::endl;
-				}
+				}*/
 				
 				// The current output is the maximum index of the weighted sum of current and previous outputs
 				std::vector<unsigned int> adjusted_results(classes.size(), 0);
@@ -1358,13 +1403,13 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 					}
 				}
 				
-				std::cout << "adjusted_results = "; print_vector(adjusted_results); std::cout << std::endl;
+				//std::cout << "adjusted_results = "; print_vector(adjusted_results); std::cout << std::endl;
 				
 				unsigned int adjusted_output = getMaxIndex(adjusted_results);
-				std::cout << "previously classified as a " << classes[outputs[n]] << std::endl;
-				std::cout << "now classified as a = " << classes[adjusted_output] << std::endl;
+				//std::cout << "previously classified as a " << classes[outputs[n]] << std::endl;
+				//std::cout << "now classified as a = " << classes[adjusted_output] << std::endl;
 				
-				std::cout << "------------------------------" << std::endl;
+				//std::cout << "------------------------------" << std::endl;
 				
 				// Overwrite current classification with weighted sum
 				if(vp.classification_window)
@@ -1448,15 +1493,16 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 		}*/
 	
 		cv::Scalar drawColour;
+		auto taa1 = std::chrono::high_resolution_clock::now();
  		for(int i = 0; i < img_rois.size(); i++)
 		{
 			// If classification doesn't meet threshold, ignore it.
-			if(certainties[i] < vp.threshold_certainty) {
+			/*if(certainties[i] < vp.threshold_certainty) {
 				if(mode == roi_mode::STRIDE){
 					rectangle(curFrame, img_rois[i], COLOURS_slategray, 1);
 				}
 				continue;
-			}
+			}*/
 
 			// Ignore some classifications
 			//if(classes[outputs[i]] == "Ship" || classes[outputs[i]] == "Deer")
@@ -1493,6 +1539,10 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 		fps_ss << fps;
 		putText(curFrame, fps_ss.str(), cv::Point(20, 50), cv::FONT_HERSHEY_PLAIN, 5, cv::Scalar(255,255,0), 2);
 		std::cout << "FPS = " << fps << std::endl;
+		auto taa2 = std::chrono::high_resolution_clock::now();
+		
+		auto duration3 = std::chrono::duration_cast<std::chrono::microseconds>(taa2 - taa1).count();
+		std::cout << "Rendering and drawing to screen took " << duration3 << " microseconds" << std::endl;
 		
 		/*std::stringstream num_objs_ss;
 		num_objs_ss << "#Objects: ";
@@ -1505,8 +1555,9 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 		putText(curFrame, frame_num_ss.str(), cv::Point(20, 80), cv::FONT_HERSHEY_PLAIN, 7, cv::Scalar(255,255,0)); 
 		std::cout << "Frame Number = " << frame_num << std::endl;*/
 		
+		cv::imshow("Test[hardware]", image_out);
 		cv::imshow("Final video", curFrame);
-		
+		std::cout << "-------------------" << std::endl;
 		if(save_output)
 		{
 			// Write current frame to output file
