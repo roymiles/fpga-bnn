@@ -38,6 +38,11 @@
  * 
  *
  *****************************************************************************/
+  /****************************************************************************
+ * Most functions were modified to encorporate to allocate/de-allocate buffer space
+ * for the current, previous and output image of the segmentation IP block
+ * along with the new ExecAccel2 function
+ ****************************************************************************/
 #include "foldedmv-offload.h"
 #include <string.h>
 #include <iostream>
