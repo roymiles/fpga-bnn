@@ -5,6 +5,6 @@ Compile the program using the create_demo.sh script with either hw_nolib, hw_lib
 Once compiled, the program can be run "./program_nolib --args"
 
 ## NOTE
-  The respective authors and my modifications have been noted to the top of every relevant top level file.
+*The respective authors and my modifications have been noted to the top of every relevant top level file (inside app/)*
   
  The setup is discussed in further detail in my Thesis.
