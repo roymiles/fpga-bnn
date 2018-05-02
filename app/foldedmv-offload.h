@@ -1,3 +1,7 @@
+// This file has been significantly modified (by roy miles, student) to add driver support for the other accelerated blocks
+// and to fix the BNN driver code etc
+// Author: Xilinx, Modified by Me
+
 /******************************************************************************
  *  Copyright (c) 2016, Xilinx, Inc.
  *  All rights reserved.
@@ -372,7 +376,7 @@ std::vector<unsigned int> testPrebuiltCIFAR10_from_image(std::vector<tiny_cnn::v
 template <unsigned int inWidth, unsigned int outWidth>
 std::vector<unsigned int> testPrebuiltCIFAR10_multiple_images(std::vector<tiny_cnn::vec_t>& imgs, const unsigned int numCategories, std::vector<unsigned int>& detailed_results, float& usecPerImage, unsigned int pso2 = 16)
 {
-	auto t1a = chrono::high_resolution_clock::now();
+	auto t_total1 = chrono::high_resolution_clock::now();
     const unsigned int count = imgs.size();
     std::vector<unsigned int> results;
 
@@ -427,15 +431,15 @@ std::vector<unsigned int> testPrebuiltCIFAR10_multiple_images(std::vector<tiny_c
         results.push_back(maxInd);
     }
 
-    auto duration = chrono::duration_cast<chrono::microseconds>(t2 - t1).count();
-    usecPerImage = (float)duration / (count);
+    auto duration_inf = chrono::duration_cast<chrono::microseconds>(t2 - t1).count();
+    usecPerImage = (float)duration_inf / (count);
 	
-	auto t2a = chrono::high_resolution_clock::now();
+	auto t_total2 = chrono::high_resolution_clock::now();
 	
-    auto durationa = chrono::duration_cast<chrono::microseconds>(t2a - t1a).count();
+    auto duration_total = chrono::duration_cast<chrono::microseconds>(t_total2 - t_total1).count();
 	
-	cout << "Inference took " << duration << " microseconds, " << usecPerImage << " usec per image" << endl;
-	cout << "Offloading and classifying took " << durationa << std::endl;
+	cout << "Inference took " << duration_inf << " microseconds, " << usecPerImage << " usec per image" << endl;
+	cout << "Offloading and classifying took " << duration_total << std::endl;
 //    cout << "Classification rate: " << 1000000.0 / usecPerImage << " images per second" << endl;
 
     delete[] packedImages;
@@ -447,6 +451,7 @@ std::vector<unsigned int> testPrebuiltCIFAR10_multiple_images(std::vector<tiny_c
 template<unsigned int NROWS, unsigned int NCOLS> // HEIGHT, WIDTH
 void doImageStuff_acc(std::vector<uint8_t> &cur, std::vector<uint8_t> &prev, std::vector<uint8_t> &output, unsigned int count)
 {	
+	auto t_total1 = chrono::high_resolution_clock::now();
 	//std::cout << "Packing inputs..." << std::endl;
     // # of uint8_t per image
     //const unsigned int psi = cur.size(); //paddedSize(input_image.size() * inWidth, bitsPerExtMemWord) / bitsPerExtMemWord;
@@ -554,11 +559,13 @@ void doImageStuff_acc(std::vector<uint8_t> &cur, std::vector<uint8_t> &prev, std
 		std::cout << unsigned(result[i]) << " ";
 	}
 	std::cout << "}" << std::endl;*/
+	auto t_total2 = chrono::high_resolution_clock::now();
 	
     auto duration = chrono::duration_cast<chrono::microseconds>(t2 - t1).count();
-    float usecPerBlockImage = (float)duration / (count);
+	auto duration_total = chrono::duration_cast<chrono::microseconds>(t_total2 - t_total1).count();
 	
-	std::cout << "Accelerated motion segmentation [after offloading] took " << usecPerBlockImage << "us to dilate the image " << std::endl;
+	std::cout << "HLS Motion segmentation took " << duration << "us" << std::endl;
+	std::cout << "HLS Motion segmentation [including offloading] took " << duration_total << "us" << std::endl;
 	
 	delete[] packedImageCur;
 	delete[] packedImagePrev;

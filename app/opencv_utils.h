@@ -1,3 +1,6 @@
+// Common parameters for OpenCV functionality
+// AUTHOR: ROY MILES (student)
+
 #pragma once
 
 #include <vector>
@@ -65,8 +68,8 @@ struct video_parameters
 
 extern video_parameters vp; // Hold all the video/image parameters
 
-#define WINDOW_WIDTH  150//176 //720 //720 // 180 * 4 176
-#define WINDOW_HEIGHT 100//144 //480 //480 // 120 * 4 144
+#define WINDOW_WIDTH  720//150//176 //720 //720 // 180 * 4 176
+#define WINDOW_HEIGHT 480//100//144 //480 //480 // 120 * 4 144
 //#define WINDOW_WIDTH  180 // 180 * 4
 //#define WINDOW_HEIGHT 120 // 120 * 4
 //#define BLOCK_WIDTH   90 //180 // COLS

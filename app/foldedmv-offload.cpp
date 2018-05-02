@@ -1,3 +1,7 @@
+// This file has been significantly modified (by roy miles, student) to add driver support for the other accelerated blocks
+// and to fix the BNN driver code etc
+// Author: Xilinx, Modified by Me
+
 /******************************************************************************
  *  Copyright (c) 2016, Xilinx, Inc.
  *  All rights reserved.

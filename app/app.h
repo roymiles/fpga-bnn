@@ -1,3 +1,5 @@
+// AUTHOR : ROY MILES (student-written)
+
 #pragma once
 
 #include <opencv2/core/core.hpp> // cv::Mat

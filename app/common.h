@@ -1,3 +1,6 @@
+// Common utility functions, templated functions etc
+// AUTHOR : ROY MILES (student-written)
+
 #pragma once
 
 #include <map>      // std::map - enum LUT
@@ -140,6 +143,24 @@ std::vector<T1> scale_vector(std::vector<T1> &in, T2 factor)
 }
 
 template<typename T>
+unsigned int getMaxIndex(std::vector<T> &container)
+{
+	T maxVal 			= container[0];
+	unsigned int maxInd = 0;
+	for(unsigned int i = 1; i < container.size(); i++)
+	{
+		if(container[i] > maxVal)
+		{
+			maxInd = i;
+			maxVal = container[i];
+		}
+	}
+	
+	
+	return maxInd;
+}
+
+template<typename T>
 float calculate_certainty(std::vector<T> &vec, int certainty_spread)
 {
 	// Normalise the vector
@@ -173,24 +194,14 @@ float calculate_certainty(std::vector<T> &vec, int certainty_spread)
 	int small_gap = vec2[vec2.size() -1] - vec2[vec2.size() -2];
 	
 	return (float)(small_gap^certainty_spread)/(float)big_gap;
-}
-
-template<typename T>
-unsigned int getMaxIndex(std::vector<T> &container)
-{
-	T maxVal 			= container[0];
-	unsigned int maxInd = 0;
-	for(unsigned int i = 1; i < container.size(); i++)
-	{
-		if(container[i] > maxVal)
-		{
-			maxInd = i;
-			maxVal = container[i];
-		}
-	}
 	
 	
-	return maxInd;
+	
+	// Get soft-max
+	/*unsigned int index = getMaxIndex(vec);
+	std::cout << "Max value = " << vec[index] << std::endl;
+	
+	return (float)vec[index]/(float)500;*/
 }
 
 std::string GetUniqueId() 
@@ -210,3 +221,39 @@ std::vector<T> getSubset(std::vector<T> &vec, int out_size)
 	
 	return subset;
 }
+
+template<typename T>
+float getMean(std::vector<T> &vec)
+{
+	T sum = 0;
+	for(auto const &v : vec)
+	{
+		sum += v;
+		std::cout << "v = " << v << std::endl;
+	}
+	
+	
+	std::cout << "sum = " << sum << std::endl;
+	std::cout << "size = " << vec.size() << std::endl;
+	
+	return (float)sum / (float)vec.size();
+}
+
+// sum (x - mu)^2
+template<typename T>
+float getVariance(std::vector<T> &vec)
+{
+	T mean = getMean(vec);
+	std::cout << "mean = " << mean << std::endl;
+	T sum = 0;
+	for(auto const &v : vec)
+	{
+		sum += std::pow((int)v - (int)mean, 2);
+		std::cout << "Sum = " << sum << std::endl;
+	}
+	
+	//std::cout << "sum = " << sum << std::endl;
+	return (float)sum / vec.size();
+}
+
+

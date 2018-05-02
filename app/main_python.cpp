@@ -1,3 +1,6 @@
+// This file has been modified (by roy miles, student) to add driver support for the other accelerated blocks
+// Author: Xilinx, Modified by Me
+
 /******************************************************************************
  *  Copyright (c) 2016, Xilinx, Inc.
  *  All rights reserved.

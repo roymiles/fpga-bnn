@@ -1,5 +1,6 @@
 // ExtractROI.cpp : Defines the entry point for the console application.
-//
+// AUTHOR : ROY MILES (student-written)
+// This is used to test functionality seperately to on the Zedboard
 
 //#include "stdafx.h"
 

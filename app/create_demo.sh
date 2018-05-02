@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# AUTHOR: ROY MILES (student)
+
 if [ "$#" -ne 1 ]; then
   echo "Usage: $0 <mode>" >&2
   echo "where <mode> = hw_lib hw_nolib sw hw_so" >&2
@@ -109,7 +111,7 @@ export PKG_CONFIG_PATH=/opt/opencv/lib/pkgconfig
 # -O3 generates standard compliant programs, -Ofast does not (but better optimisation)
 # -o0 makes it compile faster
 # g++ vs clang++
-CMD="g++ -std=c++17 -pthread -O1 -v -z muldefs -DXILINX -DOFFLOAD --std=gnu++11 $SRCS_ALL -o $OUTPUT_NAME -I/home/xilinx/open_cv2/hls/hls -I$LOC_SW_INC -I$LOC_LIB_INC -I$DRIVER_INC_PATH -I$VIVADOHLS_INCLUDE_PATH -I$TINY_CNN_PATH -I$HLS_INC_PATH `pkg-config --cflags --libs opencv` -lpthread -lsds_lib $EXTRA"
+CMD="g++ -std=c++17 -pthread -O3 -v -z muldefs -DXILINX -DOFFLOAD --std=gnu++11 $SRCS_ALL -o $OUTPUT_NAME -I/home/xilinx/open_cv2/hls/hls -I$LOC_SW_INC -I$LOC_LIB_INC -I$DRIVER_INC_PATH -I$VIVADOHLS_INCLUDE_PATH -I$TINY_CNN_PATH -I$HLS_INC_PATH `pkg-config --cflags --libs opencv` -lpthread -lsds_lib $EXTRA"
 # -L /home/xilinx/host/bnn_lib_tests/lib_bnn -l kernelbnn
 # -DNEON -mfpu=neon -funsafe-math-optimizations -ftree-vectorize -mvectorize-with-neon-quad -ftree-vectorizer-verbose=2
 echo $CMD

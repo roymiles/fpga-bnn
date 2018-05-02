@@ -1,5 +1,5 @@
 // test.cpp : Defines the entry point for the console application.
-//
+// AUTHOR : ROY MILES (student-written)
 
 #ifdef USING_KMEANS
 	#include <cstddef> // fix using ::max_align_t error
@@ -75,6 +75,7 @@ struct scene_object
 	cv::Rect pos; // Most recent position
 	std::vector<cv::Point> prev_points;
 	std::vector<std::vector<unsigned int> > result_history; // All its previous classifications
+	std::vector<unsigned int> class_results; // Just the indexes of the peaks
 };
 
 std::vector<scene_object> scene_objects;
@@ -178,7 +179,14 @@ void runBNN_multipleImages(std::vector<cv::Mat> &imgs, std::vector<std::string> 
 	
 	// Merge all the images into one .bin file
 	std::string batch_path;
-	images_to_cifar_mat(imgs, batch_path); // Pass in the vector of mats directly		
+	
+	auto t_cifar1 = std::chrono::high_resolution_clock::now();
+	images_to_cifar_mat(imgs, batch_path); // Pass in the vector of mats directly	
+	auto t_cifar2 = std::chrono::high_resolution_clock::now();
+	
+	auto duration_cifar10 = std::chrono::duration_cast<std::chrono::microseconds>(t_cifar2 - t_cifar1).count();	
+	
+	std::cout << "CIFAR10 Conversion took " << duration_cifar10 << "us" << std::endl;
 	
 	// unsigned int* inference_multiple(const char* path, int number_class, int *image_number, float *usecPerImage, unsigned int enable_detail = 0)
 	results = inference_multiple(batch_path.c_str(), number_class, imageNumber, usecPerImage, enable_detail);
@@ -1060,9 +1068,9 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 		// If no src is supplied, open the camera
 		cap.open(0); // Open the default camera
 		
-		std::cout << "Camera resolution = " << cap.get(CV_CAP_PROP_FRAME_WIDTH) << "x" << cap.get(CV_CAP_PROP_FRAME_HEIGHT) << std::endl;
 		cap.set(CV_CAP_PROP_FRAME_WIDTH,WINDOW_WIDTH);
 		cap.set(CV_CAP_PROP_FRAME_HEIGHT,WINDOW_HEIGHT);
+		std::cout << "Camera resolution = " << cap.get(CV_CAP_PROP_FRAME_WIDTH) << "x" << cap.get(CV_CAP_PROP_FRAME_HEIGHT) << std::endl;
 	}
 	else
 	{
@@ -1105,12 +1113,13 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 	
 	std::vector<cv::Rect> prev_img_rois;
 	
-	std::ofstream ofile;
+	std::ofstream ofile, ofile_var;
 	int num_success = 0;
 	int num_fail    = 0;
 	if(mode == roi_mode::SINGLE_CENTER_BOX)
 	{
 		ofile.open("accuracy_results.txt", std::ios::app);
+		ofile_var.open("variance_results.txt", std::ios::app);
 	}
 	
 	std::vector<cv::Rect> img_rois;
@@ -1121,7 +1130,8 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 	
 	while(true)
 	{
-		auto t_a = std::chrono::high_resolution_clock::now();
+		auto t_fps1 = std::chrono::high_resolution_clock::now();
+		auto t_readframe1 = std::chrono::high_resolution_clock::now();
 		current_ticks = clock();
 		
 		cap >> curFrame;
@@ -1142,13 +1152,14 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 			break;
 		
  		// Resize image
-		resize(curFrame, curFrame, frameSize); // Just overwrite the curFrame because no longer need the nonscaled version
+		if(src != "") // Don't need to resize if using camera source, as this is done automatically by setting resolution prior
+			resize(curFrame, curFrame, frameSize); // Just overwrite the curFrame because no longer need the nonscaled version
 		
 		cv::Mat diffFrame;
-		auto t_b = std::chrono::high_resolution_clock::now();
+		auto t_readframe2 = std::chrono::high_resolution_clock::now();
 		
-		auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t_b - t_a).count();
-		std::cout << "Read in current frame and resize took " << duration << " microseconds" << std::endl;	
+		auto duration_readframe = std::chrono::duration_cast<std::chrono::microseconds>(t_readframe2 - t_readframe1).count();
+		//std::cout << "Read in current frame and resize took " << duration_readframe << " microseconds" << std::endl;	
 		// Each mode needs to take a frame and calculate the regions of interest as a vector of rectangles
 		switch(mode)
 		{
@@ -1291,6 +1302,7 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 				/*
 				 * There will be a centered box that will be classified for each frame
 				 */
+				img_rois = {};
 				cv::Rect center_box;
 				//int w = 800;
 				//int h = 400;
@@ -1314,7 +1326,7 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 				
 		}
 		
-		std::cout << "Number of regions = " << img_rois.size() << std::endl;
+		//std::cout << "Number of regions = " << img_rois.size() << std::endl;
 		if(roi_limit != -1)
 			img_rois = getSubset(img_rois, roi_limit); // Only get the first roi_limit regions of interest
 		
@@ -1329,22 +1341,22 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 			for (int i = 0; i < img_rois.size(); i++)
 				detailed_results[i].resize(classes.size());
 			
-			auto t1 = std::chrono::high_resolution_clock::now();
+			auto t_classify1 = std::chrono::high_resolution_clock::now();
 			classifyRegions(curFrame, img_rois, classes, outputs, certainties, vp.bundle_regions, detailed_results);
-			auto t2 = std::chrono::high_resolution_clock::now();
+			auto t_classify2 = std::chrono::high_resolution_clock::now();
 			
-			auto duration2 = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
-			if(vp.bundle_regions)
+			auto duration_classify = std::chrono::duration_cast<std::chrono::microseconds>(t_classify2 - t_classify1).count();
+			/*if(vp.bundle_regions)
 			{
-				std::cout << "Complete frame classification [pipelined] took " << duration2 << " microseconds" << std::endl;
+				std::cout << "Complete frame classification [pipelined] took " << duration_classify << " microseconds" << std::endl;
 			}else{
-				std::cout << "Not pipelined frame classification took " << duration2 << " microseconds" << std::endl;
-			}	
+				std::cout << "Not pipelined frame classification took " << duration_classify << " microseconds" << std::endl;
+			}*/
 		}
 		
 		if(vp.motion_tracking)
 		{
-			auto t3 = std::chrono::high_resolution_clock::now();
+			auto t_tracking_windowing1 = std::chrono::high_resolution_clock::now();
 			std::vector<int> flagged_objects(scene_objects.size(), 0); // Objects that have already been attended to this frame 
 			for(int n = 0; n < img_rois.size(); n++)
 			{
@@ -1361,9 +1373,16 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 						
 						// Add the classification result to the objects history
 						scene_objects[j].result_history.insert(scene_objects[j].result_history.begin(), detailed_results[n]);
+						//std::cout << "stuff = " << getMaxIndex(detailed_results[n]) << std::endl;
+						scene_objects[j].class_results.insert(scene_objects[j].class_results.begin(), getMaxIndex(detailed_results[n]));
 						
-						if(scene_objects[j].result_history.size() > vp.window_length)
+						if(scene_objects[j].result_history.size() > vp.window_length){
 							scene_objects[j].result_history.pop_back(); // Remove any element older than HST_LEN frames
+						}
+						
+						if(scene_objects[j].class_results.size() > vp.window_length){
+							scene_objects[j].class_results.pop_back();
+						}
 						
 						// Similarly for prev_points
 						scene_objects[j].prev_points.insert(scene_objects[j].prev_points.begin(), cv::Point(img_rois[n].x + img_rois[n].width/2, img_rois[n].y + img_rois[n].height/2));
@@ -1428,19 +1447,22 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 						scene_objects[i].result_history.pop_back(); // Remove any element older than HST_LEN frames
 				}
 			}
-			auto t4 = std::chrono::high_resolution_clock::now();
+			auto t_tracking_windowing2 = std::chrono::high_resolution_clock::now();
 			
-			auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t4 - t3).count();
-			std::cout << "Motion tracking and classification windowing took " << duration << " microseconds" << std::endl;
+			auto duration_tracking_windowing = std::chrono::duration_cast<std::chrono::microseconds>(t_tracking_windowing2 - t_tracking_windowing1).count();
+			//std::cout << "Motion tracking and classification windowing took " << duration_tracking_windowing << " microseconds" << std::endl;
 		}
 		
 		//Before drawing stuff
 		delta_ticks = clock() - current_ticks; // Time in ms to read the frame, process it, and render it on the screen
+		auto t_fps2 = std::chrono::high_resolution_clock::now();
 		if (delta_ticks > 0)
 			fps = CLOCKS_PER_SEC / delta_ticks;		
 		
+		auto duration_fps = 1 / std::chrono::duration_cast<std::chrono::microseconds>(t_fps2 - t_fps1).count();
+		
 		// 
-		/*if(mode == roi_mode::SINGLE_CENTER_BOX)
+		if(mode == roi_mode::SINGLE_CENTER_BOX)
 		{
 			if(classes[outputs[0]] == "Bird")
 			{
@@ -1453,7 +1475,59 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 			double accuracy_perc = (double)(num_success)/(double)(num_success + num_fail);
 			
 			ofile << accuracy_perc << std::endl;
-		}*/
+			
+			// Calculate variance
+			//float mean = getMean(scene_objects[0].class_results);
+			//std::cout << "Mean = " << mean << std::endl;
+			
+			std::vector<unsigned int> counter;
+			counter.resize(10);
+			for(int i = 0; i < counter.size(); i++)
+			{
+				counter[i] = 0;
+			}
+			
+			int max_count = 0;
+			float perc_class; // Percentage mode
+			std::cout << "class result = "; print_vector(scene_objects[0].class_results); std::cout << std::endl;
+			for(int i = 0; i < scene_objects[0].class_results.size(); i++) // Loop through past classifications
+			{
+				counter[scene_objects[0].class_results[i]]++;
+				
+				if(counter[scene_objects[0].class_results[i]] > max_count)
+				{
+					max_count = counter[scene_objects[0].class_results[i]];
+				}
+			}
+			//std::cout << "counter = "; print_vector(counter); std::cout << std::endl;
+			for(int i = 0; i < counter.size(); i++)
+			{
+				//std::cout << "counter[i] = " << counter[i] << std::endl;
+				if(counter[i] == max_count)
+				{
+					//std::cout << "max_count = " << max_count << ", counter[i] = " << counter[i] << ", i = " << i << std::endl;
+					std::cout << "% = " << counter[i] / (float)scene_objects[0].class_results.size();
+					perc_class = counter[i] / (float)scene_objects[0].class_results.size();
+				}
+			}
+			
+			if(perc_class <= 0.7)
+			{
+				vp.window_length++;
+				history_weights.resize(vp.window_length);
+			}else if(vp.window_length > 1)
+			{
+				vp.window_length--;
+				history_weights.resize(vp.window_length);
+			}
+			
+			std::cout << "Window length = " << vp.window_length << std::endl;
+			
+			//float var = getVariance(scene_objects[0].class_results);
+			//std::cout << "Variance = " << var << std::endl;
+			
+			ofile_var << vp.window_length << std::endl;
+		}
 		
 		// Store previous classifications
 		// THE FOLLOWING WORKS WELL WITH CAMERA!! DONT REMOVE
@@ -1493,7 +1567,7 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 		}*/
 	
 		cv::Scalar drawColour;
-		auto taa1 = std::chrono::high_resolution_clock::now();
+		auto t_rendering1 = std::chrono::high_resolution_clock::now();
  		for(int i = 0; i < img_rois.size(); i++)
 		{
 			// If classification doesn't meet threshold, ignore it.
@@ -1538,11 +1612,12 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 		fps_ss << "FPS: ";
 		fps_ss << fps;
 		putText(curFrame, fps_ss.str(), cv::Point(20, 50), cv::FONT_HERSHEY_PLAIN, 5, cv::Scalar(255,255,0), 2);
-		std::cout << "FPS = " << fps << std::endl;
-		auto taa2 = std::chrono::high_resolution_clock::now();
+		//std::cout << "FPS = " << fps << std::endl;
+		std::cout << "FPS (std::chrono) = " << duration_fps << std::endl;
+		auto t_rendering2 = std::chrono::high_resolution_clock::now();
 		
-		auto duration3 = std::chrono::duration_cast<std::chrono::microseconds>(taa2 - taa1).count();
-		std::cout << "Rendering and drawing to screen took " << duration3 << " microseconds" << std::endl;
+		auto duration3 = std::chrono::duration_cast<std::chrono::microseconds>(t_rendering2 - t_rendering1).count();
+		//std::cout << "Rendering and drawing to screen took " << duration3 << " microseconds" << std::endl;
 		
 		/*std::stringstream num_objs_ss;
 		num_objs_ss << "#Objects: ";
@@ -1555,7 +1630,7 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 		putText(curFrame, frame_num_ss.str(), cv::Point(20, 80), cv::FONT_HERSHEY_PLAIN, 7, cv::Scalar(255,255,0)); 
 		std::cout << "Frame Number = " << frame_num << std::endl;*/
 		
-		cv::imshow("Test[hardware]", image_out);
+		//cv::imshow("Test[hardware]", image_out);
 		cv::imshow("Final video", curFrame);
 		std::cout << "-------------------" << std::endl;
 		if(save_output)
@@ -1587,6 +1662,7 @@ int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string sr
 	if(mode == roi_mode::SINGLE_CENTER_BOX)
 	{
 		ofile.close();
+		ofile_var.close();
 	}
 		
 	// Finished, release the capture

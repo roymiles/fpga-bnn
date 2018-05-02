@@ -1,3 +1,6 @@
+// Utility functions for OpenCV
+// AUTHOR: ROY MILES (student)
+
 #include "opencv_utils.h"
 #include "common.h"
 #include <thread>

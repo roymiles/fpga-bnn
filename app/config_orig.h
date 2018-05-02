@@ -1,3 +1,5 @@
+// This is the original config parameters supplied by Xilinx
+
 /******************************************************************************
  *  Copyright (c) 2016, Xilinx, Inc.
  *  All rights reserved.
