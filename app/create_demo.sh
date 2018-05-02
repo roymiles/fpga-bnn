@@ -1,6 +1,9 @@
 #!/bin/bash
 
 # AUTHOR: ROY MILES (student)
+# The software, hardware, and hardware with shared object lib files are all built with a common interface using app.cpp
+# Therefore, can easily test all 3 configurations under the same environment with the same app.cpp API
+# Just call the appropriate output executable "program_sw", "program_hwnolib" etc
 
 if [ "$#" -ne 1 ]; then
   echo "Usage: $0 <mode>" >&2
@@ -96,7 +99,7 @@ then
 	
 	EXTRA="-L$BNN_SO -lpython_hw-cnv-pynq"
 	
-	OUTPUT_NAME="program_sw"
+	OUTPUT_NAME="program_hw_sw"
 else
 	echo "Unknown mode parameter"
 	exit 1
