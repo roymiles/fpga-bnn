@@ -23,3 +23,11 @@ Once compiled, the program can be run "./program_nolib --args"
  10. app/xblackboxjam_hw.h
  11. MotionSegmentation.cpp
  12. All inside boot_files/
+
+
+The GitHub repository can be found at: https://github.com/iyop45/Final-year-project
+A lot of the development code has not been uploaded as it will only act as bloat. 
+For example, there is over 10GB of boot files saved across the development cycle for various accelerator designs and lots of other source files for the drivers and testing.
+Generally, the framework was built in a iterative manner with lots of modular unit testing blocks to ensure reliability across all versions.
+
+If there are any questions about how to use this framework or how to add to it, let me know at rm14075@bristol.ac.uk
