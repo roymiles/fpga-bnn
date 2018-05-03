@@ -412,7 +412,7 @@ void blockvec2mat(std::vector<T> &src, cv::Mat &dst)
 	} // Rows
 }
 
-
+				// Debugging code (not too much clutter, kept to show progression)
 				/*if(blockInd + i*BWIDTH + j > src.size())
 				{
 					// Error
@@ -508,6 +508,9 @@ void mat2blockvec(cv::Mat &src, std::vector<T> &dst)
 	}
 }
 
+// ****************************************************************************************************************
+// *** Attempting to accelerate the kmeans clustering was soon abandoned, see thesis in Future work   *************
+// ****************************************************************************************************************
 /*
 inline void doImageStuff_thread(cv::Mat &result, cv::Mat &threshFrame, cv::Rect &roi);
 

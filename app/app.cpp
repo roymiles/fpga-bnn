@@ -64,9 +64,6 @@ extern "C" {
 	unsigned int inference_arr(uint8_t * img_in, unsigned int results[64], int number_class, float *usecPerImage);
 }
 
-// How many previous classifications should be remembered
-//#define HST_LEN 32
-//float lambda = 0.2; // Decay constant
 std::vector<float> history_weights;
 std::vector<std::vector<unsigned int> > result_history;
 
@@ -151,16 +148,15 @@ void testBNN(const char* batch_path, int &output, float &certainty, int num_imag
 void runBNN_multipleImages(std::vector<cv::Mat> &imgs, std::vector<std::string> &classes, std::vector<unsigned int> &outputs, std::vector<float> &certainties, std::vector<std::vector<unsigned int> > &detailed_results)
 {	
 	// Save all the images (cv::Mat) to temp files
-	/*std::vector<std::string> tmp_paths(imgs.size());
-	std::string tmp;
-	for(int i = 0; i < imgs.size(); i++)
-	{
-		tmp = USER_DIR + "tmp_" + std::to_string(i) + ".png";
-		tmp_paths[i] = tmp;
-		cv::imwrite(tmp, imgs[i]);
-	}*/
+	//std::vector<std::string> tmp_paths(imgs.size());
+	//std::string tmp;
+	//for(int i = 0; i < imgs.size(); i++)
+	//{
+	//	tmp = USER_DIR + "tmp_" + std::to_string(i) + ".png";
+	//	tmp_paths[i] = tmp;
+	//	cv::imwrite(tmp, imgs[i]);
+	//}
 	
-	//unsigned int results[64];
 	int number_class = 10; // Number of classes (birds, dogs etc...)
 	float* usecPerImage;
 	int* imageNumber;
@@ -223,7 +219,7 @@ void runBNN_multipleImages(std::vector<cv::Mat> &imgs, std::vector<std::string> 
 }
 
 // Running BNN on an image (return index result)
-// Output = index (classification)
+// Output 	 = index (classification)
 // Certainty = float, square difference from max value and all the other classifications
 void runBNN_image(const char* path, std::vector<std::string> &classes, unsigned int &output, float &certainty, std::vector<unsigned int> &detailed_results)
 {
@@ -475,6 +471,7 @@ int main(int argc, char** argv)
 		}
 		else if(mode_s == "test") // Test the accelerator (the bnn and the image segmentation)
 		{
+			// The following code blocks can be uncommented/commented to test various components of the framework
 			std::cout << "--- RUNNING TESTS ---" << std::endl;
 			
 			
@@ -498,8 +495,6 @@ int main(int argc, char** argv)
 
 			// Test the bnn on the test batches
 			testBNN(src_s.c_str(), output, certainty, num_images_i, pso_i);
-			
-			//return 0; // NOT DOING DILATION STUFF
 			
 			
 // ----------------------------------------------------------------------------------------------------
@@ -1028,7 +1023,7 @@ int main(int argc, char** argv)
 	return 0;
 }
 
-// TODO: Fix this
+// As the dataset is fixed for CIFAR10, this function simply returns these classes
 std::vector<std::string> loadClasses()
 {
    	// Get a list of all the output classes
@@ -1059,7 +1054,7 @@ std::vector<std::string> loadClasses()
 	return classes;
 }
 
-// TODO: merge streamCamera and streamVideo
+// This function acts as the entry point for the camera or video streaming
 int streamVideo(roi_mode mode, std::vector<std::string> &classes, std::string src, bool save_output)
 {
 	cv::VideoCapture cap;

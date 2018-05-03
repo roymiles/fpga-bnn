@@ -160,6 +160,7 @@ unsigned int getMaxIndex(std::vector<T> &container)
 	return maxInd;
 }
 
+// Comment out appropriate blocks to perform the different classification certainty metrics discussed in the thesis
 template<typename T>
 float calculate_certainty(std::vector<T> &vec, int certainty_spread)
 {

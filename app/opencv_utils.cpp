@@ -58,7 +58,7 @@ std::vector<cv::Rect> contourRegions(cv::Mat &src)
 
 const int NUM_REGIONS = (WINDOW_WIDTH/BLOCK_WIDTH) * (WINDOW_HEIGHT/BLOCK_HEIGHT);
 
-// Not actually going to do in thread
+// This concept was abandoned, however, someone could pick it up again
 /*
 void doImageStuff_thread(cv::Mat &result, cv::Mat &threshFrame, cv::Rect &roi) 
 {
@@ -110,6 +110,9 @@ cv::Mat backgroundSubtraction(cv::Mat &curImage, cv::Mat &prevImage)
 	//cv::imshow("5. Threshold frame", threshFrame);
 	
 	cv::Mat result(WINDOW_HEIGHT, WINDOW_WIDTH, CV_8UC1);
+	
+	// The following block code is used if just the dilation is accelerated on the FPGA.
+	// The input array will need to be partitioned appropriately before hand
 /*
 	auto t1 = chrono::high_resolution_clock::now();
 
@@ -424,6 +427,7 @@ void mergeOverlappingBoxes(std::vector<cv::Rect> &inputBoxes, cv::Mat &image, st
 // author : Eric Yuan 
 // my blog: http://eric-yuan.me/
 
+// ----------------- Start ---
 #define ATD at<double>
 
 void 
@@ -500,6 +504,7 @@ concatenateMatC(std::vector<cv::Mat> &vec){
     divide(res, 255.0, res);
     return res;
 }
+// --------------- END ---
 
 bool addGaussianNoise(const cv::Mat mSrc, cv::Mat &mDst, double Mean, double StdDev)
 {
